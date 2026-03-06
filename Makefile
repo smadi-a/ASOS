@@ -37,10 +37,16 @@
 
 # ── Cross-compiler ─────────────────────────────────────────────────────────
 
-# Kernel cross-compiler (freestanding x86-64-elf target).
-# Override on the command line if your toolchain has a different prefix:
-#   make CROSS=x86_64-linux-elf-
-CROSS   ?= x86_64-elf-
+# Kernel compiler.
+#
+# If a proper x86_64-elf cross-compiler is installed, set CROSS:
+#   make CROSS=x86_64-elf-
+#
+# On an x86_64 Linux host the host gcc/ld work fine because the kernel
+# is compiled with -ffreestanding -nostdlib and linked with our own
+# linker script — no host sysroot or C runtime is involved.
+# The default below uses the host toolchain for convenience.
+CROSS   ?=
 CC      := $(CROSS)gcc
 LD      := $(CROSS)ld
 
@@ -53,8 +59,19 @@ HOST_OBJCOPY := objcopy
 # Adjust these if gnu-efi is installed in a non-standard location.
 # On Ubuntu/Debian the defaults below are correct after `apt install gnu-efi`.
 
-GNUEFI_INC  ?= /usr/include/efi
-GNUEFI_LIB  ?= /usr/lib
+# Local sysroot used when packages are extracted without system install.
+# Kept outside build/ so that `make clean` does not delete it.
+# Auto-populated by the `deps` target (requires apt-get download + dpkg -x).
+LOCAL_SYSROOT := $(CURDIR)/deps/sysroot
+
+# Prefer system install; fall back to local sysroot.
+ifneq ($(wildcard /usr/lib/crt0-efi-x86_64.o),)
+  GNUEFI_INC  ?= /usr/include/efi
+  GNUEFI_LIB  ?= /usr/lib
+else
+  GNUEFI_INC  ?= $(LOCAL_SYSROOT)/usr/include/efi
+  GNUEFI_LIB  ?= $(LOCAL_SYSROOT)/usr/lib
+endif
 GNUEFI_CRT0 ?= $(GNUEFI_LIB)/crt0-efi-x86_64.o
 GNUEFI_LDS  ?= $(GNUEFI_LIB)/elf_x86_64_efi.lds
 
@@ -121,6 +138,8 @@ KERNEL_CFLAGS := \
     -mno-sse \
     -mno-sse2 \
     -mcmodel=kernel \
+    -fno-pic \
+    -fno-pie \
     -I.
 
 # Kernel linker flags (ld, not gcc).
@@ -149,7 +168,11 @@ KERNEL_ELF := $(BUILD)/kernel.elf
 
 # ── Top-level targets ──────────────────────────────────────────────────────
 
-.PHONY: all run clean check-tools
+# Delete partially-built targets if a recipe fails, preventing stale
+# outputs from causing silent skips on the next make invocation.
+.DELETE_ON_ERROR:
+
+.PHONY: all run clean deps check-tools
 
 all: check-tools $(DISK_IMG)
 	@echo ""
@@ -159,19 +182,25 @@ all: check-tools $(DISK_IMG)
 
 # ── Tool availability check ────────────────────────────────────────────────
 
+# mtools and parted may live in the local sysroot if not system-installed.
+MFORMAT := $(shell command -v mformat 2>/dev/null || echo $(LOCAL_SYSROOT)/usr/bin/mformat)
+MMD     := $(shell command -v mmd     2>/dev/null || echo $(LOCAL_SYSROOT)/usr/bin/mmd)
+MCOPY   := $(shell command -v mcopy   2>/dev/null || echo $(LOCAL_SYSROOT)/usr/bin/mcopy)
+PARTED  := $(shell command -v parted  2>/dev/null || echo $(LOCAL_SYSROOT)/usr/sbin/parted)
+
 check-tools:
 	@command -v $(CC)          >/dev/null 2>&1 || \
-	    { echo "ERROR: $(CC) not found. Install x86_64-elf-gcc cross-compiler."; exit 1; }
+	    { echo "ERROR: $(CC) not found. On an x86_64 Linux host run: make CROSS="; exit 1; }
 	@command -v $(HOST_CC)     >/dev/null 2>&1 || \
 	    { echo "ERROR: $(HOST_CC) not found."; exit 1; }
 	@command -v $(HOST_OBJCOPY)>/dev/null 2>&1 || \
 	    { echo "ERROR: $(HOST_OBJCOPY) (binutils) not found."; exit 1; }
 	@test -f $(GNUEFI_CRT0) || \
 	    { echo "ERROR: GNU-EFI not found (looked for $(GNUEFI_CRT0)). Install gnu-efi."; exit 1; }
-	@command -v mformat        >/dev/null 2>&1 || \
-	    { echo "ERROR: mtools not found. Install mtools."; exit 1; }
-	@command -v parted         >/dev/null 2>&1 || \
-	    { echo "ERROR: parted not found. Install parted."; exit 1; }
+	@test -x $(MFORMAT) || \
+	    { echo "ERROR: mformat (mtools) not found."; exit 1; }
+	@test -x $(PARTED) || \
+	    { echo "ERROR: parted not found."; exit 1; }
 
 # ── Directory creation ─────────────────────────────────────────────────────
 
@@ -239,24 +268,24 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) | $(BUILD)
 	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=$(IMG_SIZE) status=none
 
 	# 2. Write a GPT partition table with one EFI System Partition.
-	parted -s $(DISK_IMG) mklabel gpt
-	parted -s $(DISK_IMG) mkpart ESP fat32 2048s 100%
-	parted -s $(DISK_IMG) set 1 esp on
+	$(PARTED) -s $(DISK_IMG) mklabel gpt
+	$(PARTED) -s $(DISK_IMG) mkpart ESP fat32 2048s 100%
+	$(PARTED) -s $(DISK_IMG) set 1 esp on
 
 	# 3. Format the partition as FAT32 using mtools (no root needed).
 	#    The @@$(ESP_OFFSET) suffix tells mtools to access the raw image
 	#    at the given byte offset, i.e., skip over the GPT header region.
-	mformat -i $(DISK_IMG)@@$(ESP_OFFSET) -F -v "ASOS" ::
+	$(MFORMAT) -i $(DISK_IMG)@@$(ESP_OFFSET) -F -v "ASOS" ::
 
 	# 4. Create the required directory tree.
-	mmd -i $(DISK_IMG)@@$(ESP_OFFSET) \
-	    :: ::/EFI ::/EFI/BOOT ::/EFI/asos
+	$(MMD) -i $(DISK_IMG)@@$(ESP_OFFSET) \
+	    ::/EFI ::/EFI/BOOT ::/EFI/asos
 
 	# 5. Copy the bootloader to the default UEFI boot path.
-	mcopy -i $(DISK_IMG)@@$(ESP_OFFSET) $(BL_EFI) ::/EFI/BOOT/BOOTX64.EFI
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(BL_EFI) ::/EFI/BOOT/BOOTX64.EFI
 
 	# 6. Copy the kernel ELF.
-	mcopy -i $(DISK_IMG)@@$(ESP_OFFSET) $(KERNEL_ELF) ::/EFI/asos/kernel.elf
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(KERNEL_ELF) ::/EFI/asos/kernel.elf
 
 	@echo "Disk image ready: $(DISK_IMG)"
 
@@ -296,7 +325,28 @@ $(VDI): $(DISK_IMG)
 	VBoxManage convertfromraw $< $@ --format VDI
 	@echo "VDI ready: $(VDI)"
 
+# ── Local dependency bootstrap ─────────────────────────────────────────────
+#
+# Downloads gnu-efi and mtools .deb packages and extracts them to deps/sysroot
+# without requiring root.  Run this once if the packages are not installed
+# system-wide.  `make clean` intentionally does NOT remove deps/ so you do
+# not have to re-download on every clean rebuild.
+
+DEPS_STAMP := $(LOCAL_SYSROOT)/.extracted
+
+deps: $(DEPS_STAMP)
+
+$(DEPS_STAMP):
+	mkdir -p $(LOCAL_SYSROOT)
+	@echo "Downloading gnu-efi and mtools..."
+	cd /tmp && apt-get download gnu-efi mtools
+	dpkg -x /tmp/gnu-efi_*.deb  $(LOCAL_SYSROOT)
+	dpkg -x /tmp/mtools_*.deb   $(LOCAL_SYSROOT)
+	touch $(DEPS_STAMP)
+	@echo "deps/ sysroot ready."
+
 # ── Clean ──────────────────────────────────────────────────────────────────
 
 clean:
 	rm -rf $(BUILD)
+	@echo "Note: deps/ sysroot preserved. Run 'rm -rf deps' to remove it too."
