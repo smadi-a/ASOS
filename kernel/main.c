@@ -1,5 +1,5 @@
 /*
- * kernel/main.c — ASOS kernel entry point (Milestone 4).
+ * kernel/main.c — ASOS kernel entry point (Milestone 5).
  *
  * Boot sequence
  * ─────────────
@@ -12,11 +12,14 @@
  *  7.  Switch RSP to kernel BSS stack.
  *  8.  vmm_init()
  *  9.  heap_init()
- * 10.  pic_init()   — remap IRQs, mask all lines
- * 11.  pit_init()   — 1000 Hz timer, unmask IRQ 0
- * 12.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
- * 13.  sti           — enable interrupts
- * 14.  Keyboard echo demo with uptime reporting
+ * 10.  ata_init()   — detect IDE drives
+ * 11.  vfs_mount()  — mount FAT32 on slave drive
+ * 12.  FAT32 demo   — list root dir, read HELLO.TXT
+ * 13.  pic_init()   — remap IRQs, mask all lines
+ * 14.  pit_init()   — 1000 Hz timer, unmask IRQ 0
+ * 15.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
+ * 16.  sti           — enable interrupts
+ * 17.  Keyboard echo demo with uptime reporting
  */
 
 #include <stdint.h>
@@ -34,6 +37,8 @@
 #include "pit.h"
 #include "keyboard.h"
 #include "string.h"
+#include "ata.h"
+#include "vfs.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
 
@@ -90,6 +95,46 @@ void kernel_main(BootInfo *info)
 
     heap_init();
     serial_puts("[OK] Heap\n");
+
+    /* ── ATA + FAT32 ──────────────────────────────────────────────────── */
+    ata_init();
+
+    if (vfs_mount(ATA_DRIVE_SLAVE) == 0) {
+        serial_puts("[OK] FAT32 mounted on drive 1\n");
+        fb_puts("[OK] FAT32 mounted\n", COLOR_GREEN, COLOR_BLACK);
+
+        /* List root directory. */
+        vfs_dirent_t dir_ents[16];
+        uint32_t dir_count = 0;
+        if (vfs_list_dir("/", dir_ents, 16, &dir_count) == 0) {
+            serial_puts("[DIR] /\n");
+            for (uint32_t i = 0; i < dir_count; i++) {
+                serial_puts("  ");
+                serial_puts(dir_ents[i].is_dir ? "[DIR] " : "      ");
+                serial_puts(dir_ents[i].name);
+                serial_puts("\n");
+            }
+        }
+
+        /* Read and print HELLO.TXT. */
+        vfs_file_t file;
+        if (vfs_open("/HELLO.TXT", &file) == 0) {
+            char buf[128];
+            uint32_t got = 0;
+            if (vfs_read(&file, buf, sizeof(buf) - 1U, &got) == 0 && got > 0) {
+                buf[got] = '\0';
+                serial_puts("[FILE] HELLO.TXT:\n");
+                serial_puts(buf);
+                fb_puts(buf, COLOR_GREEN, COLOR_BLACK);
+            }
+            vfs_close(&file);
+        } else {
+            serial_puts("[WARN] HELLO.TXT not found\n");
+        }
+    } else {
+        serial_puts("[WARN] No FAT32 disk on slave drive\n");
+        fb_puts("[WARN] No data disk\n", COLOR_YELLOW, COLOR_BLACK);
+    }
 
     pic_init();
     pit_init();

@@ -105,6 +105,7 @@ BUILD_KN := $(BUILD)/kernel
 # ── Disk image ─────────────────────────────────────────────────────────────
 
 DISK_IMG   := $(BUILD)/asos.img
+DATADISK   := $(BUILD)/datadisk.img
 VDI        := $(BUILD)/asos.vdi
 IMG_SIZE   := 64   # MiB — plenty for a FAT32 ESP + tiny kernel
 
@@ -178,7 +179,10 @@ KERNEL_C_SRCS := \
     kernel/pic.c \
     kernel/pit.c \
     kernel/ring_buffer.c \
-    kernel/keyboard.c
+    kernel/keyboard.c \
+    kernel/ata.c \
+    kernel/fat32.c \
+    kernel/vfs.c
 
 KERNEL_ASM_SRCS := \
     kernel/gdt_flush.asm \
@@ -196,12 +200,13 @@ KERNEL_ELF := $(BUILD)/kernel.elf
 # outputs from causing silent skips on the next make invocation.
 .DELETE_ON_ERROR:
 
-.PHONY: all run clean deps check-tools vdi
+.PHONY: all run clean deps check-tools vdi datadisk
 
-all: check-tools $(VDI)
+all: check-tools $(VDI) $(DATADISK)
 	@echo ""
 	@echo "Build complete."
 	@echo "  Disk image : $(DISK_IMG)"
+	@echo "  Data disk  : $(DATADISK)"
 	@echo "  VDI        : $(VDI)"
 	@echo "  Run with  : make run"
 
@@ -319,6 +324,13 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) | $(BUILD)
 
 	@echo "Disk image ready: $(DISK_IMG)"
 
+# ── Data disk (FAT32 raw image for ATA slave) ──────────────────────────────
+
+datadisk: $(DATADISK)
+
+$(DATADISK): tools/mkdatadisk.sh | $(BUILD)
+	MFORMAT=$(MFORMAT) MCOPY=$(MCOPY) bash tools/mkdatadisk.sh $(DATADISK)
+
 # ── QEMU ───────────────────────────────────────────────────────────────────
 #
 # Flags:
@@ -331,13 +343,14 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) | $(BUILD)
 # Remove -nographic and add -vga std if you want to see the framebuffer
 # in a QEMU window.
 
-run: $(DISK_IMG)
+run: $(DISK_IMG) $(DATADISK)
 ifeq ($(OVMF),)
 	$(error OVMF firmware not found. Run: make deps)
 endif
 	$(QEMU) \
 	    -drive if=pflash,format=raw,readonly=on,file=$(OVMF) \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk \
+	    -drive file=$(DATADISK),format=raw,if=ide,index=1,media=disk \
 	    -m 512M \
 	    -nographic \
 	    -no-reboot
