@@ -38,9 +38,8 @@ Languages of choice:
 - [ ] Building a V2 in Rust?
 
 ## Local Dev
-- `make` to build everything
+- `make` to build everything + compile the vdi disk files (boot disk + data disk)
 - `make run` to run the OS using Qemu (exit using ctrl+a -> x)
-- `make vdi` to compile the vdi file
 
 ## Dependencies
 ```
