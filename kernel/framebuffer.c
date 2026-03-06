@@ -24,6 +24,10 @@ static uint32_t    g_height;  /* Screen height in pixels              */
 static uint32_t    g_pitch;   /* Bytes per scanline                   */
 static PixelFormat g_format;  /* PIXEL_FORMAT_RGB or PIXEL_FORMAT_BGR */
 
+/* Cursor state for fb_set_cursor / fb_puts. */
+static uint32_t g_cursor_col = 0;
+static uint32_t g_cursor_row = 0;
+
 /* ── Internal helpers ─────────────────────────────────────────────────────*/
 
 /*
@@ -130,7 +134,6 @@ void fb_puts_at(const char *s, uint32_t col, uint32_t row,
         char c = *s++;
 
         if (c == '\n') {
-            /* Newline: move to the beginning of the next glyph row. */
             row++;
             col = start_col;
             continue;
@@ -138,5 +141,26 @@ void fb_puts_at(const char *s, uint32_t col, uint32_t row,
 
         fb_putc_at(c, col * FONT_WIDTH, row * FONT_HEIGHT, fg, bg);
         col++;
+    }
+}
+
+void fb_set_cursor(uint32_t col, uint32_t row)
+{
+    g_cursor_col = col;
+    g_cursor_row = row;
+}
+
+void fb_puts(const char *s, uint32_t fg, uint32_t bg)
+{
+    while (*s) {
+        char c = *s++;
+        if (c == '\n') {
+            g_cursor_col = 0;
+            g_cursor_row++;
+        } else {
+            fb_putc_at(c, g_cursor_col * FONT_WIDTH,
+                          g_cursor_row * FONT_HEIGHT, fg, bg);
+            g_cursor_col++;
+        }
     }
 }
