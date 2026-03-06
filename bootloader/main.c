@@ -1,28 +1,20 @@
 /*
- * bootloader/main.c — ASOS UEFI Bootloader
+ * bootloader/main.c — ASOS UEFI Bootloader (Milestone 3: higher-half)
  *
- * This is a PE32+ UEFI application built with GNU-EFI.  It runs before the
- * OS kernel and is responsible for:
+ * Responsibilities:
+ *   1. Locate and initialise the GOP framebuffer.
+ *   2. Load \EFI\asos\kernel.elf to its physical addresses (from p_paddr).
+ *   3. Collect the UEFI memory map and exit boot services.
+ *   4. Set up minimal page tables:
+ *        • Identity map first 4 GB (1 GB pages, including page 0).
+ *        • Higher-half: map 0xFFFFFFFF80000000 → physical 0x0 (1 GB page).
+ *   5. Switch CR3 to those page tables.
+ *   6. Jump to the kernel entry point at its virtual address.
  *
- *   1. Locating and initialising the GOP framebuffer.
- *   2. Opening \EFI\asos\kernel.elf from the same ESP volume.
- *   3. Parsing the ELF64 header and loading every PT_LOAD segment to its
- *      physical address.
- *   4. Collecting the UEFI memory map.
- *   5. Calling ExitBootServices() to hand control to the kernel.
- *   6. Jumping to the ELF entry point with a BootInfo pointer.
- *
- * Build: see the top-level Makefile.
- *
- * Design notes
- * ─────────────
- * • We deliberately avoid C99 VLAs; all dynamic allocations use
- *   AllocatePool / AllocatePages so the UEFI firmware tracks them.
- * • Error handling is "print and halt" — this is a bootloader, not a kernel.
- *   After ExitBootServices() we can no longer call Print(), so failures there
- *   simply halt the CPU.
- * • Byte-for-byte copies use our own loop rather than gnu-efi CopyMem so
- *   the dependency set stays minimal.
+ * After step 5 the CPU can address both low physical memory (identity map)
+ * and the higher-half kernel virtual addresses simultaneously.  The kernel
+ * then replaces these minimal tables with its own fine-grained ones in
+ * vmm_init().
  */
 
 #include <efi.h>
@@ -30,56 +22,49 @@
 
 #include "../shared/boot_info.h"
 
-/* ── ELF64 structures ─────────────────────────────────────────────────────
- *
- * We define our own rather than pulling in <elf.h> from the host system,
- * which may not be present in every cross-build environment.
- */
+/* ── ELF64 structures ─────────────────────────────────────────────────────*/
 
-#define ELF_MAGIC   0x464C457FU  /* little-endian representation of "\x7FELF" */
-#define ET_EXEC     2            /* executable file                            */
-#define EM_X86_64   62           /* AMD x86-64 machine type                    */
-#define PT_LOAD     1            /* loadable segment                           */
+#define ELF_MAGIC   0x464C457FU
+#define ET_EXEC     2
+#define EM_X86_64   62
+#define PT_LOAD     1
 
-/* 64-bit ELF file header (Elf64_Ehdr) */
 typedef struct {
-    UINT8  e_ident[16]; /* Magic, class, data encoding, version, OS/ABI …    */
-    UINT16 e_type;      /* Object file type (ET_EXEC, ET_DYN, …)             */
-    UINT16 e_machine;   /* Target ISA (EM_X86_64 = 62)                       */
-    UINT32 e_version;   /* ELF version (always 1)                            */
-    UINT64 e_entry;     /* Virtual address of entry point                    */
-    UINT64 e_phoff;     /* Offset of program header table in file            */
-    UINT64 e_shoff;     /* Offset of section header table in file            */
-    UINT32 e_flags;     /* Processor-specific flags                          */
-    UINT16 e_ehsize;    /* Size of this header                               */
-    UINT16 e_phentsize; /* Size of one program header entry                  */
-    UINT16 e_phnum;     /* Number of program header entries                  */
-    UINT16 e_shentsize; /* Size of one section header entry                  */
-    UINT16 e_shnum;     /* Number of section header entries                  */
-    UINT16 e_shstrndx;  /* Index of section name string table                */
+    UINT8  e_ident[16];
+    UINT16 e_type;
+    UINT16 e_machine;
+    UINT32 e_version;
+    UINT64 e_entry;
+    UINT64 e_phoff;
+    UINT64 e_shoff;
+    UINT32 e_flags;
+    UINT16 e_ehsize;
+    UINT16 e_phentsize;
+    UINT16 e_phnum;
+    UINT16 e_shentsize;
+    UINT16 e_shnum;
+    UINT16 e_shstrndx;
 } Elf64_Ehdr;
 
-/* 64-bit ELF program header (Elf64_Phdr) */
 typedef struct {
-    UINT32 p_type;   /* Segment type (PT_LOAD, PT_DYNAMIC, …)               */
-    UINT32 p_flags;  /* Segment flags (PF_R / PF_W / PF_X)                  */
-    UINT64 p_offset; /* Byte offset of segment data in the file              */
-    UINT64 p_vaddr;  /* Virtual address in memory                            */
-    UINT64 p_paddr;  /* Physical address (used directly here, pre-paging)    */
-    UINT64 p_filesz; /* Bytes of data to copy from the file                  */
-    UINT64 p_memsz;  /* Bytes to map in memory (>= p_filesz; excess = .bss) */
-    UINT64 p_align;  /* Alignment constraint (power of 2)                    */
+    UINT32 p_type;
+    UINT32 p_flags;
+    UINT64 p_offset;
+    UINT64 p_vaddr;
+    UINT64 p_paddr;
+    UINT64 p_filesz;
+    UINT64 p_memsz;
+    UINT64 p_align;
 } Elf64_Phdr;
 
-/* ── Utility: spin forever ────────────────────────────────────────────────*/
+/* ── Utility ──────────────────────────────────────────────────────────────*/
+
 __attribute__((noreturn))
 static void halt(void)
 {
-    for (;;)
-        __asm__ volatile ("cli; hlt");
+    for (;;) __asm__ volatile ("cli; hlt");
 }
 
-/* ── Utility: check EFI status, print and halt on error ──────────────────*/
 static void check(EFI_STATUS status, const CHAR16 *msg)
 {
     if (EFI_ERROR(status)) {
@@ -88,12 +73,73 @@ static void check(EFI_STATUS status, const CHAR16 *msg)
     }
 }
 
-/* ── Stage 1: GOP framebuffer initialisation ──────────────────────────────
+/* ── Minimal page tables (static, 4 KB-aligned) ──────────────────────────
  *
- * We ask GOP for every available video mode and pick the first one that
- * matches our preferred resolution (1024×768, 32 bpp).  If none matches we
- * fall back to whatever is already active.
+ * Three 4 KB tables:
+ *   boot_pml4      — root PML4
+ *   boot_pdpt_low  — covers low 512 GB (PML4[0]); we use entries [0..3]
+ *   boot_pdpt_high — covers high 512 GB (PML4[511]); we use entry [510]
+ *
+ * All three are static so they live in the bootloader's EfiLoaderData
+ * pages, which persist after ExitBootServices().
+ *
+ * PML4[0]    → boot_pdpt_low:
+ *   [0] = PA 0x0_0000_0000  (1 GB, present+writable+pagesize)
+ *   [1] = PA 0x4000_0000    (1 GB)
+ *   [2] = PA 0x8000_0000    (1 GB)
+ *   [3] = PA 0xC000_0000    (1 GB)
+ *
+ * PML4[511]  → boot_pdpt_high:
+ *   [510] = PA 0x0  (1 GB, maps VA 0xFFFFFFFF80000000 → PA 0x0)
+ *
+ * With these tables virtual 0xFFFFFFFF80100000 == physical 0x100000
+ * (where the kernel is loaded), which matches the linker VMA.
  */
+
+#define PAGE_PRESENT   (1ULL << 0)
+#define PAGE_WRITABLE  (1ULL << 1)
+#define PAGE_SIZE_BIT  (1ULL << 7)   /* 1 GB page at PDPT level */
+
+static UINT64 boot_pml4     [512] __attribute__((aligned(4096)));
+static UINT64 boot_pdpt_low [512] __attribute__((aligned(4096)));
+static UINT64 boot_pdpt_high[512] __attribute__((aligned(4096)));
+
+static void setup_page_tables(void)
+{
+    /* Zero the tables (they're in BSS but zero explicitly for clarity). */
+    for (int i = 0; i < 512; i++) {
+        boot_pml4[i]      = 0;
+        boot_pdpt_low[i]  = 0;
+        boot_pdpt_high[i] = 0;
+    }
+
+    /* PML4[0] → boot_pdpt_low */
+    boot_pml4[0] = (UINT64)(UINTN)boot_pdpt_low | PAGE_WRITABLE | PAGE_PRESENT;
+
+    /* PML4[511] → boot_pdpt_high */
+    boot_pml4[511] = (UINT64)(UINTN)boot_pdpt_high | PAGE_WRITABLE | PAGE_PRESENT;
+
+    /* Identity map first 4 GB: four 1 GB pages. */
+    for (int gb = 0; gb < 4; gb++) {
+        boot_pdpt_low[gb] = ((UINT64)gb << 30)
+                          | PAGE_SIZE_BIT | PAGE_WRITABLE | PAGE_PRESENT;
+    }
+
+    /*
+     * Higher-half: PDPT_high[510] maps the 1 GB starting at
+     * VA 0xFFFFFFFF80000000 to PA 0x0.
+     *
+     * PML4[511] covers VAs 0xFFFF800000000000 – 0xFFFFFFFFFFFFFFFF.
+     * Within that, PDPT index 510 covers the 1 GB:
+     *   0xFFFFFFFF80000000 – 0xFFFFFFFFBFFFFFFF
+     *
+     * Mapping it to PA 0x0 means virtual 0xFFFFFFFF80100000 → PA 0x100000.
+     */
+    boot_pdpt_high[510] = 0ULL | PAGE_SIZE_BIT | PAGE_WRITABLE | PAGE_PRESENT;
+}
+
+/* ── Stage 1: GOP ────────────────────────────────────────────────────────*/
+
 static void init_gop(Framebuffer *fb)
 {
     EFI_STATUS status;
@@ -106,17 +152,15 @@ static void init_gop(Framebuffer *fb)
                                &gop_guid, NULL, (VOID **)&gop);
     check(status, L"LocateProtocol(GOP)");
 
-    /* Search for the preferred 1024×768 32-bit mode. */
-    UINT32   best_mode     = gop->Mode->Mode;
-    BOOLEAN  found_pref    = FALSE;
+    UINT32  best_mode  = gop->Mode->Mode;
+    BOOLEAN found_pref = FALSE;
 
     for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
         UINTN info_sz;
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
 
         status = uefi_call_wrapper(gop->QueryMode, 4, gop, i, &info_sz, &info);
-        if (EFI_ERROR(status))
-            continue;
+        if (EFI_ERROR(status)) continue;
 
         if (info->HorizontalResolution == 1024 &&
             info->VerticalResolution   == 768  &&
@@ -129,10 +173,8 @@ static void init_gop(Framebuffer *fb)
     }
 
     if (!found_pref)
-        Print(L"[boot] Preferred 1024x768 mode not found — using mode %u\r\n",
-              best_mode);
+        Print(L"[boot] 1024x768 not found — using mode %u\r\n", best_mode);
 
-    /* Switch to the chosen mode only if it is not already active. */
     if (best_mode != gop->Mode->Mode) {
         status = uefi_call_wrapper(gop->SetMode, 2, gop, best_mode);
         check(status, L"GOP SetMode");
@@ -143,30 +185,19 @@ static void init_gop(Framebuffer *fb)
     fb->base   = (UINT64)gop->Mode->FrameBufferBase;
     fb->width  = info->HorizontalResolution;
     fb->height = info->VerticalResolution;
-    fb->pitch  = info->PixelsPerScanLine * 4; /* 32-bit (4 bytes) per pixel */
+    fb->pitch  = info->PixelsPerScanLine * 4;
     fb->format = (info->PixelFormat == PixelBlueGreenRedReserved8BitPerColor)
-                 ? PIXEL_FORMAT_BGR
-                 : PIXEL_FORMAT_RGB;
+                 ? PIXEL_FORMAT_BGR : PIXEL_FORMAT_RGB;
 
-    Print(L"[boot] GOP: %ux%u pitch=%u fmt=%s base=0x%lx\r\n",
-          fb->width, fb->height, fb->pitch,
-          (fb->format == PIXEL_FORMAT_BGR) ? L"BGR" : L"RGB",
-          fb->base);
+    Print(L"[boot] GOP: %ux%u pitch=%u base=0x%lx\r\n",
+          fb->width, fb->height, fb->pitch, fb->base);
 }
 
-/* ── Stage 2: kernel ELF loading ──────────────────────────────────────────
- *
- * Opens \EFI\asos\kernel.elf on the same volume the bootloader was loaded
- * from, validates the ELF64 header, then iterates over PT_LOAD segments and
- * maps each one to its specified physical address using AllocatePages().
- *
- * Returns the ELF entry point address.
- */
+/* ── Stage 2: kernel ELF loading ─────────────────────────────────────────*/
+
 static UINT64 load_kernel(EFI_HANDLE ImageHandle)
 {
     EFI_STATUS status;
-
-    /* ── 2a. Get a file system handle on our boot volume ─────────────── */
     EFI_GUID lip_guid  = EFI_LOADED_IMAGE_PROTOCOL_GUID;
     EFI_GUID sfsp_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
 
@@ -192,9 +223,8 @@ static UINT64 load_kernel(EFI_HANDLE ImageHandle)
     status = uefi_call_wrapper(root->Open, 5, root, &kfile,
                                L"\\EFI\\asos\\kernel.elf",
                                EFI_FILE_MODE_READ, 0ULL);
-    check(status, L"Open(\\EFI\\asos\\kernel.elf)");
+    check(status, L"Open(kernel.elf)");
 
-    /* ── 2b. Read and validate the ELF header ────────────────────────── */
     Elf64_Ehdr ehdr;
     UINTN      ehdr_sz = sizeof(ehdr);
 
@@ -202,23 +232,18 @@ static UINT64 load_kernel(EFI_HANDLE ImageHandle)
     check(status, L"Read(ELF header)");
 
     if (*(UINT32 *)ehdr.e_ident != ELF_MAGIC) {
-        Print(L"FATAL: kernel.elf: bad ELF magic\r\n");
-        halt();
+        Print(L"FATAL: bad ELF magic\r\n"); halt();
     }
     if (ehdr.e_machine != EM_X86_64) {
-        Print(L"FATAL: kernel.elf: not an x86-64 ELF\r\n");
-        halt();
+        Print(L"FATAL: not x86-64\r\n"); halt();
     }
     if (ehdr.e_type != ET_EXEC) {
-        Print(L"FATAL: kernel.elf: not an executable (type=%u)\r\n",
-              ehdr.e_type);
-        halt();
+        Print(L"FATAL: not executable\r\n"); halt();
     }
 
-    Print(L"[boot] ELF valid — entry=0x%lx  phdrs=%u\r\n",
+    Print(L"[boot] ELF entry=0x%lx  phdrs=%u\r\n",
           ehdr.e_entry, (UINT32)ehdr.e_phnum);
 
-    /* ── 2c. Read all program headers ────────────────────────────────── */
     UINTN      phdrs_sz = (UINTN)ehdr.e_phnum * sizeof(Elf64_Phdr);
     Elf64_Phdr *phdrs;
 
@@ -230,23 +255,16 @@ static UINT64 load_kernel(EFI_HANDLE ImageHandle)
     check(status, L"SetPosition(e_phoff)");
 
     status = uefi_call_wrapper(kfile->Read, 3, kfile, &phdrs_sz, phdrs);
-    check(status, L"Read(program headers)");
+    check(status, L"Read(phdrs)");
 
-    /* ── 2d. Load each PT_LOAD segment ───────────────────────────────── */
     for (UINT16 i = 0; i < ehdr.e_phnum; i++) {
         Elf64_Phdr *ph = &phdrs[i];
-        if (ph->p_type != PT_LOAD)
-            continue;
+        if (ph->p_type != PT_LOAD) continue;
 
         Print(L"[boot]   LOAD[%u] paddr=0x%lx filesz=%lu memsz=%lu\r\n",
               (UINT32)i, ph->p_paddr, ph->p_filesz, ph->p_memsz);
 
-        /*
-         * Reserve the physical pages that the segment will occupy.
-         * AllocateAddress asks UEFI to use *exactly* this physical range,
-         * so if anything collides (e.g., firmware data) this will fail
-         * loudly rather than silently stomping on it.
-         */
+        /* Load to the physical address (p_paddr). */
         UINTN                pages = (UINTN)((ph->p_memsz + 0xFFFULL) >> 12);
         EFI_PHYSICAL_ADDRESS phys  = (EFI_PHYSICAL_ADDRESS)ph->p_paddr;
 
@@ -255,43 +273,27 @@ static UINT64 load_kernel(EFI_HANDLE ImageHandle)
                                    pages, &phys);
         check(status, L"AllocatePages(segment)");
 
-        /* Zero the entire mapped region first — this handles .bss. */
         UINT8 *dest = (UINT8 *)(UINTN)ph->p_paddr;
-        for (UINT64 j = 0; j < ph->p_memsz; j++)
-            dest[j] = 0;
+        for (UINT64 j = 0; j < ph->p_memsz; j++) dest[j] = 0;
 
-        /* Seek to the segment's file offset and read its data. */
-        status = uefi_call_wrapper(kfile->SetPosition, 2,
-                                   kfile, ph->p_offset);
+        status = uefi_call_wrapper(kfile->SetPosition, 2, kfile, ph->p_offset);
         check(status, L"SetPosition(segment)");
 
         UINTN filesz = (UINTN)ph->p_filesz;
         status = uefi_call_wrapper(kfile->Read, 3, kfile, &filesz, dest);
-        check(status, L"Read(segment data)");
+        check(status, L"Read(segment)");
     }
 
     uefi_call_wrapper(BS->FreePool, 1, phdrs);
     uefi_call_wrapper(kfile->Close, 1, kfile);
     uefi_call_wrapper(root->Close, 1, root);
 
-    Print(L"[boot] Kernel loaded.\r\n");
+    Print(L"[boot] Kernel loaded. Entry=0x%lx\r\n", ehdr.e_entry);
     return ehdr.e_entry;
 }
 
-/* ── Stage 3: memory map + ExitBootServices ───────────────────────────────
- *
- * UEFI mandates that we call GetMemoryMap() immediately before
- * ExitBootServices() and use the MapKey from *that* call.  Any allocation
- * between the two calls (including our own AllocatePool below) invalidates
- * the key and forces a retry.
- *
- * Strategy:
- *   1. Call GetMemoryMap() once to determine the required buffer size.
- *   2. AllocatePool() for that buffer (this invalidates the key).
- *   3. Call GetMemoryMap() again with the real buffer.
- *   4. Call ExitBootServices().  If it fails (another allocation sneaked in)
- *      do one more GetMemoryMap() + ExitBootServices().
- */
+/* ── Stage 3: memory map + ExitBootServices ──────────────────────────────*/
+
 static void collect_mmap_and_exit(EFI_HANDLE ImageHandle, MemoryMap *mm)
 {
     EFI_STATUS status;
@@ -299,18 +301,14 @@ static void collect_mmap_and_exit(EFI_HANDLE ImageHandle, MemoryMap *mm)
     UINT32     desc_ver;
     VOID      *buf = NULL;
 
-    /* First call: query the required buffer size (will return TOO_SMALL). */
     uefi_call_wrapper(BS->GetMemoryMap, 5,
                       &map_size, buf, &map_key, &desc_size, &desc_ver);
-
-    /* Add slack for the allocation below and any new firmware descriptors. */
     map_size += 4 * desc_size;
 
     status = uefi_call_wrapper(BS->AllocatePool, 3,
                                EfiLoaderData, map_size, &buf);
-    check(status, L"AllocatePool(memory map)");
+    check(status, L"AllocatePool(mmap)");
 
-    /* Second call: fill the buffer; capture the key. */
     status = uefi_call_wrapper(BS->GetMemoryMap, 5,
                                &map_size, buf, &map_key, &desc_size, &desc_ver);
     check(status, L"GetMemoryMap");
@@ -322,67 +320,59 @@ static void collect_mmap_and_exit(EFI_HANDLE ImageHandle, MemoryMap *mm)
 
     Print(L"[boot] Memory map: %lu bytes, %lu entries.\r\n",
           mm->map_size, mm->map_size / mm->descriptor_size);
-
     Print(L"[boot] Exiting boot services...\r\n");
 
     status = uefi_call_wrapper(BS->ExitBootServices, 2, ImageHandle, map_key);
     if (EFI_ERROR(status)) {
-        /*
-         * The map was updated between our GetMemoryMap and ExitBootServices
-         * calls (this can happen if a firmware timer callback ran).  Fetch
-         * the map one more time — we MUST NOT call Print() here because
-         * ConOut may already be gone on some firmware.
-         */
         status = uefi_call_wrapper(BS->GetMemoryMap, 5,
                                    &map_size, buf, &map_key,
                                    &desc_size, &desc_ver);
         mm->map_size = (UINT64)map_size;
-
         status = uefi_call_wrapper(BS->ExitBootServices, 2,
                                    ImageHandle, map_key);
-        if (EFI_ERROR(status))
-            halt(); /* Cannot Print() here — firmware state is undefined. */
+        if (EFI_ERROR(status)) halt();
     }
-
-    /* Boot services are now terminated.  Do NOT call any BS functions. */
 }
 
 /* ── UEFI entry point ─────────────────────────────────────────────────────*/
+
 EFI_STATUS
 efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     InitializeLib(ImageHandle, SystemTable);
 
     Print(L"\r\n============================\r\n");
-    Print(L"  ASOS Bootloader\r\n");
+    Print(L"  ASOS Bootloader (M3)\r\n");
     Print(L"============================\r\n\r\n");
 
-    /*
-     * Allocate BootInfo in static storage.  This lives inside our
-     * EfiLoaderData pages, which remain mapped after ExitBootServices()
-     * because we never call FreePages() on them.
-     */
     static BootInfo boot_info;
 
-    /* Stage 1: framebuffer. */
     init_gop(&boot_info.framebuffer);
-
-    /* Stage 2: kernel ELF. */
     UINT64 kernel_entry = load_kernel(ImageHandle);
-
-    /* Stage 3: memory map + exit. */
     collect_mmap_and_exit(ImageHandle, &boot_info.memory_map);
 
     /*
-     * At this point boot services are gone.  Jump directly to the kernel.
-     * The kernel entry point signature is:
+     * Boot services are now gone.  Set up the minimal higher-half page
+     * tables and switch CR3 before jumping to the kernel virtual entry.
      *
-     *   void kernel_main(BootInfo *info);
+     * After this point: no UEFI calls, no Print().
+     */
+    setup_page_tables();
+
+    __asm__ volatile (
+        "mov %0, %%cr3"
+        :: "r"((UINT64)(UINTN)boot_pml4)
+        : "memory"
+    );
+
+    /*
+     * Jump to the kernel entry point.
+     * kernel_entry is a higher-half virtual address (0xFFFFFFFF80XXXXXX).
+     * Our new page tables map it correctly via boot_pdpt_high[510].
      */
     typedef void (*KernelEntry)(BootInfo *);
     KernelEntry kernel = (KernelEntry)(UINTN)kernel_entry;
     kernel(&boot_info);
 
-    /* Should never be reached. */
     halt();
 }

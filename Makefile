@@ -105,6 +105,7 @@ BUILD_KN := $(BUILD)/kernel
 # ── Disk image ─────────────────────────────────────────────────────────────
 
 DISK_IMG   := $(BUILD)/asos.img
+VDI        := $(BUILD)/asos.vdi
 IMG_SIZE   := 64   # MiB — plenty for a FAT32 ESP + tiny kernel
 
 # The ESP partition starts at sector 2048 (1 MiB offset) by convention.
@@ -168,7 +169,12 @@ KERNEL_C_SRCS := \
     kernel/gdt.c \
     kernel/tss.c \
     kernel/idt.c \
-    kernel/isr.c
+    kernel/isr.c \
+    kernel/string.c \
+    kernel/panic.c \
+    kernel/pmm.c \
+    kernel/vmm.c \
+    kernel/heap.c
 
 KERNEL_ASM_SRCS := \
     kernel/gdt_flush.asm \
@@ -328,7 +334,7 @@ endif
 	$(QEMU) \
 	    -drive if=pflash,format=raw,readonly=on,file=$(OVMF) \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk \
-	    -m 256M \
+	    -m 512M \
 	    -nographic \
 	    -no-reboot
 
