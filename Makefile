@@ -80,14 +80,19 @@ GNUEFI_LDS  ?= $(GNUEFI_LIB)/elf_x86_64_efi.lds
 # Try a few common locations; override with `make OVMF=/path/to/OVMF.fd`.
 
 ifeq ($(OVMF),)
-  # Try locations in order; use the first one that exists.
+  # Try system locations then the local sysroot (populated by `make deps`).
   OVMF_CANDIDATES := \
       /usr/share/ovmf/x64/OVMF.fd \
       /usr/share/OVMF/OVMF_CODE.fd \
       /usr/share/edk2/x64/OVMF.fd \
-      /usr/share/edk2-ovmf/OVMF_CODE.fd
+      /usr/share/edk2-ovmf/OVMF_CODE.fd \
+      $(LOCAL_SYSROOT)/usr/share/ovmf/OVMF.fd
   OVMF := $(firstword $(foreach f,$(OVMF_CANDIDATES),$(wildcard $(f))))
 endif
+
+# QEMU binary — prefer system install, fall back to local sysroot.
+QEMU := $(shell command -v qemu-system-x86_64 2>/dev/null || \
+                echo /usr/bin/qemu-system-x86_64)
 
 # ── Build output directory ─────────────────────────────────────────────────
 
@@ -318,13 +323,12 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) | $(BUILD)
 
 run: $(DISK_IMG)
 ifeq ($(OVMF),)
-	$(error OVMF firmware not found. Install ovmf/edk2 or set OVMF=/path/to/OVMF.fd)
+	$(error OVMF firmware not found. Run: make deps)
 endif
-	qemu-system-x86_64 \
+	$(QEMU) \
 	    -drive if=pflash,format=raw,readonly=on,file=$(OVMF) \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk \
 	    -m 256M \
-	    -serial stdio \
 	    -nographic \
 	    -no-reboot
 
@@ -353,10 +357,12 @@ deps: $(DEPS_STAMP)
 
 $(DEPS_STAMP):
 	mkdir -p $(LOCAL_SYSROOT)
-	@echo "Downloading gnu-efi and mtools..."
-	cd /tmp && apt-get download gnu-efi mtools
-	dpkg -x /tmp/gnu-efi_*.deb  $(LOCAL_SYSROOT)
-	dpkg -x /tmp/mtools_*.deb   $(LOCAL_SYSROOT)
+	@echo "Downloading dependencies..."
+	cd /tmp && apt-get download gnu-efi mtools ovmf qemu-system-x86
+	dpkg -x /tmp/gnu-efi_*.deb          $(LOCAL_SYSROOT)
+	dpkg -x /tmp/mtools_*.deb           $(LOCAL_SYSROOT)
+	dpkg -x /tmp/ovmf_*.deb             $(LOCAL_SYSROOT)
+	dpkg -x /tmp/qemu-system-x86_*.deb  $(LOCAL_SYSROOT)
 	touch $(DEPS_STAMP)
 	@echo "deps/ sysroot ready."
 
