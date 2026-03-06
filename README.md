@@ -21,20 +21,20 @@ Languages of choice:
 - User Space: An ELF loader, A minimal C runtime, A simple shell
 
 ## Milestones:
-- UEFI application loads the kernel ELF into memory, sets up a framebuffer via GOP, exits boot services, and jumps to the kernel. The kernel prints "ASOS" to both serial and screen
-- Set up a proper 64-bit GDT, load an IDT, wire up exception handlers (at minimum: division error, page fault, general protection fault, double fault). At this point, a fault gives you a diagnostic message instead of a triple-fault reboot
-- Physical memory manager + virtual memory: Parse the UEFI memory map, build a physical frame allocator (bitmap or buddy), set up your own page tables (replacing the UEFI-provided ones), and get a kernel heap working (a simple slab or bump allocator to start)
-- Interrupts, keyboard, timer: PIC or APIC initialization, PS/2 keyboard driver (VirtualBox emulates this), PIT or APIC timer. After this, you can type characters and measure time
-- Storage + FAT32 read support: ATA/AHCI driver (VirtualBox supports both), partition table parsing, read-only FAT32. You can now load files from disk
-- Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
-- Syscall interface + ELF loader: syscall/sysret on x86_64, a minimal syscall table (write, read, exit, exec), ELF64 loading from your FAT32 volume
-- Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
-- Refactor towards a microkernel
-- Building a V2 in Rust?
+- [x] UEFI application loads the kernel ELF into memory, sets up a framebuffer via GOP, exits boot services, and jumps to the kernel. The kernel prints "ASOS" to both serial and screen
+- [x] Set up a proper 64-bit GDT, load an IDT, wire up exception handlers (at minimum: division error, page fault, general protection fault, double fault). At this point, a fault gives you a diagnostic message instead of a triple-fault reboot
+- [ ] Physical memory manager + virtual memory: Parse the UEFI memory map, build a physical frame allocator (bitmap or buddy), set up your own page tables (replacing the UEFI-provided ones), and get a kernel heap working (a simple slab or bump allocator to start)
+- [ ] Interrupts, keyboard, timer: PIC or APIC initialization, PS/2 keyboard driver (VirtualBox emulates this), PIT or APIC timer. After this, you can type characters and measure time
+- [ ] Storage + FAT32 read support: ATA/AHCI driver (VirtualBox supports both), partition table parsing, read-only FAT32. You can now load files from disk
+- [ ] Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
+- [ ] Syscall interface + ELF loader: syscall/sysret on x86_64, a minimal syscall table (write, read, exit, exec), ELF64 loading from your FAT32 volume
+- [ ] Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
+- [ ] Refactor towards a microkernel
+- [ ] Building a V2 in Rust?
 
 ## Local Dev
 - `make` to build everything
-- `make run` to run the OS using Qemu (exit using ctrl+x -> a)
+- `make run` to run the OS using Qemu (exit using ctrl+a -> x)
 - `make vdi` to compile the vdi file
 
 ## Dependencies
