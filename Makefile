@@ -181,12 +181,13 @@ KERNEL_ELF := $(BUILD)/kernel.elf
 # outputs from causing silent skips on the next make invocation.
 .DELETE_ON_ERROR:
 
-.PHONY: all run clean deps check-tools
+.PHONY: all run clean deps check-tools vdi
 
-all: check-tools $(DISK_IMG)
+all: check-tools $(VDI)
 	@echo ""
 	@echo "Build complete."
 	@echo "  Disk image : $(DISK_IMG)"
+	@echo "  VDI        : $(VDI)"
 	@echo "  Run with  : make run"
 
 # ── Tool availability check ────────────────────────────────────────────────
