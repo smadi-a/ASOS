@@ -174,7 +174,11 @@ KERNEL_C_SRCS := \
     kernel/panic.c \
     kernel/pmm.c \
     kernel/vmm.c \
-    kernel/heap.c
+    kernel/heap.c \
+    kernel/pic.c \
+    kernel/pit.c \
+    kernel/ring_buffer.c \
+    kernel/keyboard.c
 
 KERNEL_ASM_SRCS := \
     kernel/gdt_flush.asm \

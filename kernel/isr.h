@@ -57,10 +57,23 @@ typedef struct __attribute__((packed)) {
 } InterruptFrame;
 
 /*
+ * Callback type for registered interrupt/IRQ handlers.
+ * Handlers must be fast (no I/O printing, no kmalloc).
+ * EOI is sent by isr_handler() after the callback returns — do not
+ * send EOI inside the callback.
+ */
+typedef void (*isr_handler_func)(InterruptFrame *frame);
+
+/*
+ * Register a handler for the given vector (0–255).
+ * For hardware IRQs, use vector = 32 + irq_number.
+ * Replaces any previously installed handler.
+ */
+void isr_register_handler(uint8_t vector, isr_handler_func handler);
+
+/*
  * C-side dispatcher called from the assembly common stub.
- * @frame  Pointer to the interrupt frame on the stack.
- *         Do NOT return from this function for fatal exceptions
- *         (the stub will attempt iretq, which may triple-fault).
+ * Not called directly; invoked via the ISR stub table.
  */
 void isr_handler(InterruptFrame *frame);
 

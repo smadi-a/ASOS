@@ -1,19 +1,22 @@
 /*
- * kernel/main.c — ASOS kernel entry point (Milestone 3).
+ * kernel/main.c — ASOS kernel entry point (Milestone 4).
  *
  * Boot sequence
  * ─────────────
- *  1.  Clear BSS (safety — bootloader already zeroed it, but be explicit).
- *  2.  serial_init()   — UART, no dependencies.
- *  3.  fb_init()       — store framebuffer descriptor from BootInfo.
- *  4.  gdt_init()      — install our GDT + TSS.
- *  5.  idt_init()      — install our IDT (256 vectors).
- *  6.  pmm_init()      — build physical frame bitmap from EFI memory map.
- *  7.  Switch RSP to a kernel BSS stack so the UEFI-allocated stack is
- *      no longer in use before vmm_init() invalidates the first 2 MB.
- *  8.  vmm_init()      — build 4-level page tables, switch CR3.
- *  9.  heap_init()     — set up kernel heap.
- * 10.  Tests: kmalloc/kfree sanity, null-pointer page fault.
+ *  1.  Clear BSS.
+ *  2.  serial_init()
+ *  3.  fb_init() + fb_clear()
+ *  4.  gdt_init()
+ *  5.  idt_init()
+ *  6.  pmm_init()
+ *  7.  Switch RSP to kernel BSS stack.
+ *  8.  vmm_init()
+ *  9.  heap_init()
+ * 10.  pic_init()   — remap IRQs, mask all lines
+ * 11.  pit_init()   — 1000 Hz timer, unmask IRQ 0
+ * 12.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
+ * 13.  sti           — enable interrupts
+ * 14.  Keyboard echo demo with uptime reporting
  */
 
 #include <stdint.h>
@@ -27,28 +30,18 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "heap.h"
+#include "pic.h"
+#include "pit.h"
+#include "keyboard.h"
 #include "string.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
 
-/* ── Linker symbols ───────────────────────────────────────────────────────*/
-
 extern char __bss_start[];
 extern char __bss_end[];
 
-/* ── Kernel stack ─────────────────────────────────────────────────────────
- *
- * We switch to this stack (in BSS, at a higher-half virtual address)
- * before vmm_init() so that vmm_init()'s CR3 switch doesn't invalidate
- * our active stack.  The UEFI-provided stack is in low physical memory
- * and the identity map skips the first 2 MB — if the UEFI stack happened
- * to be there it would fault.  Switching early avoids the risk entirely.
- */
 #define KSTACK_SIZE  16384
-
 static uint8_t g_kstack[KSTACK_SIZE] __attribute__((aligned(16)));
-
-/* ── BSS clear ────────────────────────────────────────────────────────────*/
 
 static void clear_bss(void)
 {
@@ -56,103 +49,95 @@ static void clear_bss(void)
     while (p < __bss_end) *p++ = 0;
 }
 
+/* ── Simple decimal-to-string for uptime display ──────────────────────── */
+
+static void serial_put_dec(uint64_t v)
+{
+    if (v == 0) { serial_putc('0'); return; }
+    char tmp[20];
+    int i = 0;
+    while (v) { tmp[i++] = (char)('0' + (int)(v % 10)); v /= 10; }
+    while (i--) serial_putc(tmp[i]);
+}
+
 /* ── kernel_main ──────────────────────────────────────────────────────────*/
 
 void kernel_main(BootInfo *info)
 {
-    /* ① BSS */
     clear_bss();
 
-    /* ② Serial */
     serial_init();
     serial_puts(ASOS_VERSION "\n");
 
-    /* ③ Framebuffer */
     fb_init(&info->framebuffer);
     fb_clear(COLOR_BLACK);
-    fb_puts_at(ASOS_VERSION, 2, 0, COLOR_WHITE, COLOR_BLACK);
+    fb_set_cursor(0, 0);
 
-    /* ④ GDT */
     gdt_init();
     serial_puts("[OK] GDT\n");
-    fb_puts_at("[OK] GDT", 2, 1, COLOR_GREEN, COLOR_BLACK);
 
-    /* ⑤ IDT */
     idt_init();
     serial_puts("[OK] IDT\n");
-    fb_puts_at("[OK] IDT", 2, 2, COLOR_GREEN, COLOR_BLACK);
 
-    /* ⑥ PMM */
     pmm_init(info);
     serial_puts("[OK] PMM\n");
-    fb_puts_at("[OK] PMM", 2, 3, COLOR_GREEN, COLOR_BLACK);
 
-    /* ⑦ Switch to kernel BSS stack before vmm_init() changes CR3.
-     *
-     * After this inline asm, RSP points to the top of g_kstack (a
-     * higher-half virtual address).  We do not return from kernel_main
-     * so there is no caller frame to preserve.
-     *
-     * Clobber "memory" forces the compiler to flush all pending writes
-     * before the stack switch.
-     */
-    __asm__ volatile (
-        "mov %0, %%rsp"
-        :: "r"((uint64_t)(uintptr_t)(g_kstack + KSTACK_SIZE))
-        : "memory"
-    );
+    __asm__ volatile ("mov %0, %%rsp"
+        :: "r"((uint64_t)(uintptr_t)(g_kstack + KSTACK_SIZE)) : "memory");
 
-    /* ⑧ VMM — builds new page tables and switches CR3. */
     vmm_init();
     serial_puts("[OK] VMM\n");
-    fb_puts_at("[OK] VMM", 2, 4, COLOR_GREEN, COLOR_BLACK);
 
-    /* ⑨ Heap */
     heap_init();
     serial_puts("[OK] Heap\n");
-    fb_puts_at("[OK] Heap", 2, 5, COLOR_GREEN, COLOR_BLACK);
 
-    /* ⑩ Memory management status */
-    serial_puts("[OK] Memory management initialised.\n");
-    fb_puts_at("[OK] Memory management", 2, 6, COLOR_GREEN, COLOR_BLACK);
+    pic_init();
+    pit_init();
+    keyboard_init();
 
-    /* ── Heap test ────────────────────────────────────────────────────── */
-    serial_puts("[TEST] kmalloc/kfree...\n");
+    /* Enable hardware interrupts — must come AFTER PIC init and all
+     * handler registrations.  Before this point any IRQ would be
+     * interpreted as a CPU exception. */
+    __asm__ volatile ("sti" ::: "memory");
+    serial_puts("[OK] Interrupts enabled.\n");
 
-    void *a = kmalloc(64);
-    void *b = kmalloc(128);
-    void *c = kmalloc(256);
+    /* ── Banner ───────────────────────────────────────────────────────── */
+    fb_puts(ASOS_VERSION " — Keyboard active. Type something:\n",
+            COLOR_WHITE, COLOR_BLACK);
+    serial_puts(ASOS_VERSION " — Keyboard active. Type something:\n");
 
-    if (!a || !b || !c)
-        serial_puts("[FAIL] kmalloc returned NULL\n");
-    else
-        serial_puts("[TEST] Three allocations OK.\n");
+    /* ── Main event loop ─────────────────────────────────────────────── */
+    uint64_t last_uptime_s = 0;
 
-    /* Write to the blocks to confirm they're backed by real memory. */
-    memset(a, 0xAA, 64);
-    memset(b, 0xBB, 128);
-    memset(c, 0xCC, 256);
+    for (;;) {
+        /* Sleep until the next interrupt (timer or keyboard). */
+        __asm__ volatile ("hlt" ::: "memory");
 
-    kfree(b);
-    void *d = kmalloc(64);   /* should reuse b's space */
-    if (!d) serial_puts("[FAIL] re-alloc after free\n");
-    else    serial_puts("[TEST] Free+realloc OK.\n");
+        /* ── Uptime reporting (serial only, once per second) ── */
+        uint64_t ticks = pit_get_ticks();
+        uint64_t now_s = ticks / 1000;
+        if (now_s != last_uptime_s) {
+            last_uptime_s = now_s;
+            serial_puts("[TIMER] Uptime: ");
+            serial_put_dec(now_s);
+            serial_puts("s\n");
+        }
 
-    kfree(a);
-    kfree(d);
-    kfree(c);
+        /* ── Drain keyboard ring buffer ── */
+        char c;
+        while (keyboard_read_char(&c)) {
+            /* Echo to serial. */
+            if (c == '\b') {
+                serial_putc('\b');
+                serial_putc(' ');
+                serial_putc('\b');
+            } else {
+                serial_putc(c);
+            }
 
-    serial_puts("[TEST] Heap test passed.\n");
-    fb_puts_at("[OK] Heap test", 2, 7, COLOR_GREEN, COLOR_BLACK);
-
-    /* ── Null-pointer dereference test ────────────────────────────────── */
-    serial_puts("[TEST] Triggering null-pointer #PF...\n");
-    fb_puts_at("Testing null #PF...", 2, 9, COLOR_YELLOW, COLOR_BLACK);
-
-    volatile uint64_t *null_ptr = (volatile uint64_t *)0;
-    (void)*null_ptr;   /* should trigger #PF — address 0 is not mapped */
-
-    /* Should never reach here. */
-    serial_puts("[FAIL] Null dereference did not fault!\n");
-    for (;;) __asm__ volatile ("hlt");
+            /* Echo to framebuffer via cursor-based terminal. */
+            char str[2] = { c, '\0' };
+            fb_puts(str, COLOR_WHITE, COLOR_BLACK);
+        }
+    }
 }
