@@ -20,7 +20,6 @@ Languages of choice:
 - System Calls
 - User Space: An ELF loader, A minimal C runtime, A simple shell
 
-
 ## Milestones:
 - UEFI application loads the kernel ELF into memory, sets up a framebuffer via GOP, exits boot services, and jumps to the kernel. The kernel prints "ASOS" to both serial and screen
 - Set up a proper 64-bit GDT, load an IDT, wire up exception handlers (at minimum: division error, page fault, general protection fault, double fault). At this point, a fault gives you a diagnostic message instead of a triple-fault reboot
@@ -33,9 +32,15 @@ Languages of choice:
 - Refactor towards a microkernel
 - Building a V2 in Rust?
 
+## Local Dev
+- `make` to build everything
+- `make run` to run the OS using Qemu (exit using ctrl+x -> a)
+- `make vdi` to compile the vdi file
 
-- Kernel heap allocator
-- Basic filesystem (read files from disk)
-- Process management, context switching, scheduler
-- User-mode processes with syscalls
-- Shell that can launch programs
+## Dependencies
+```
+sudo apt-get update && sudo apt-get install libfdt1
+sudo apt-get update && sudo apt-get install libpmem1
+sudo apt-get update && sudo apt-get install -y librdmacm1 libslirp0 liburing2 libaio1t64
+sudo apt-get update && sudo apt-get install -y qemu-system-x86
+```
