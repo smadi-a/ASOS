@@ -155,14 +155,23 @@ BL_OBJ  := $(BUILD_BL)/main.o
 BL_SO   := $(BUILD_BL)/bootloader.so
 BL_EFI  := $(BUILD_BL)/BOOTX64.EFI
 
-KERNEL_SRCS := \
+KERNEL_C_SRCS := \
     kernel/main.c \
     kernel/serial.c \
     kernel/framebuffer.c \
-    kernel/font.c
+    kernel/font.c \
+    kernel/gdt.c \
+    kernel/tss.c \
+    kernel/idt.c \
+    kernel/isr.c
 
-# Map kernel/foo.c → build/kernel/foo.o
-KERNEL_OBJS := $(patsubst kernel/%.c, $(BUILD_KN)/%.o, $(KERNEL_SRCS))
+KERNEL_ASM_SRCS := \
+    kernel/gdt_flush.asm \
+    kernel/isr_stubs.asm
+
+KERNEL_C_OBJS   := $(patsubst kernel/%.c,   $(BUILD_KN)/%.o, $(KERNEL_C_SRCS))
+KERNEL_ASM_OBJS := $(patsubst kernel/%.asm, $(BUILD_KN)/%.o, $(KERNEL_ASM_SRCS))
+KERNEL_OBJS     := $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS)
 
 KERNEL_ELF := $(BUILD)/kernel.elf
 
@@ -195,6 +204,8 @@ check-tools:
 	    { echo "ERROR: $(HOST_CC) not found."; exit 1; }
 	@command -v $(HOST_OBJCOPY)>/dev/null 2>&1 || \
 	    { echo "ERROR: $(HOST_OBJCOPY) (binutils) not found."; exit 1; }
+	@command -v nasm           >/dev/null 2>&1 || \
+	    { echo "ERROR: nasm not found. Install nasm."; exit 1; }
 	@test -f $(GNUEFI_CRT0) || \
 	    { echo "ERROR: GNU-EFI not found (looked for $(GNUEFI_CRT0)). Install gnu-efi."; exit 1; }
 	@test -x $(MFORMAT) || \
@@ -245,6 +256,9 @@ $(BL_EFI): $(BL_SO) | $(BUILD_BL)
 
 $(BUILD_KN)/%.o: kernel/%.c | $(BUILD_KN)
 	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
+
+$(BUILD_KN)/%.o: kernel/%.asm | $(BUILD_KN)
+	nasm -f elf64 $< -o $@
 
 $(KERNEL_ELF): $(KERNEL_OBJS) linker.ld
 	$(LD) $(KERNEL_LDFLAGS) $(KERNEL_OBJS) -o $@
