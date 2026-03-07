@@ -104,9 +104,10 @@ BUILD_KN := $(BUILD)/kernel
 
 # ── Disk image ─────────────────────────────────────────────────────────────
 
-DISK_IMG   := $(BUILD)/asos.img
-DATADISK   := $(BUILD)/datadisk.img
-VDI        := $(BUILD)/asos.vdi
+DISK_IMG       := $(BUILD)/asos.img
+DATADISK       := $(BUILD)/datadisk.img
+VDI            := $(BUILD)/asos.vdi
+DATADISK_VDI   := $(BUILD)/datadisk.vdi
 IMG_SIZE   := 64   # MiB — plenty for a FAT32 ESP + tiny kernel
 
 # The ESP partition starts at sector 2048 (1 MiB offset) by convention.
@@ -200,15 +201,16 @@ KERNEL_ELF := $(BUILD)/kernel.elf
 # outputs from causing silent skips on the next make invocation.
 .DELETE_ON_ERROR:
 
-.PHONY: all run clean deps check-tools vdi datadisk
+.PHONY: all run clean deps check-tools vdi datadisk vdi-data
 
-all: check-tools $(VDI) $(DATADISK)
+all: check-tools $(VDI) $(DATADISK_VDI)
 	@echo ""
 	@echo "Build complete."
-	@echo "  Disk image : $(DISK_IMG)"
-	@echo "  Data disk  : $(DATADISK)"
-	@echo "  VDI        : $(VDI)"
-	@echo "  Run with  : make run"
+	@echo "  Boot disk  : $(DISK_IMG)  /  $(VDI)"
+	@echo "  Data disk  : $(DATADISK)  /  $(DATADISK_VDI)"
+	@echo "  QEMU       : make run"
+	@echo "  VirtualBox : attach $(VDI) as Primary Master,"
+	@echo "               attach $(DATADISK_VDI) as Primary Slave (IDE)"
 
 # ── Tool availability check ────────────────────────────────────────────────
 
@@ -366,6 +368,13 @@ $(VDI): $(DISK_IMG)
 	rm -f $(VDI)
 	VBoxManage convertfromraw $< $@ --format VDI
 	@echo "VDI ready: $(VDI)"
+
+vdi-data: $(DATADISK_VDI)
+
+$(DATADISK_VDI): $(DATADISK)
+	rm -f $(DATADISK_VDI)
+	VBoxManage convertfromraw $< $@ --format VDI
+	@echo "Data disk VDI ready: $(DATADISK_VDI)"
 
 # ── Local dependency bootstrap ─────────────────────────────────────────────
 #
