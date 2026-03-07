@@ -4,6 +4,10 @@
  * Provides character and string rendering using the 8×8 bitmap font
  * (font.h / font.c).  Colours are expressed as 0x00RRGGBB 32-bit values;
  * the driver handles BGR ↔ RGB swapping transparently.
+ *
+ * The cursor-based API (fb_set_cursor / fb_puts) supports '\n' for
+ * newlines, '\b' for backspace, and automatic scrolling when the cursor
+ * reaches the bottom of the screen.
  */
 
 #ifndef FRAMEBUFFER_H
@@ -36,13 +40,21 @@ void fb_putc_at(char c, uint32_t px, uint32_t py, uint32_t fg, uint32_t bg);
 void fb_puts_at(const char *s, uint32_t col, uint32_t row,
                 uint32_t fg, uint32_t bg);
 
-/* ── Cursor-based output (used by the exception/panic printer) ─────────── */
+/* ── Cursor-based terminal output ──────────────────────────────────────── */
 
-/* Set the internal glyph-cell cursor.  Subsequent fb_puts() calls start here. */
+/* Set the internal glyph-cell cursor. */
 void fb_set_cursor(uint32_t col, uint32_t row);
 
-/* Print a string at the current cursor position, advancing the cursor.
- * '\n' moves to column 0 of the next row.                             */
+/* Get the current cursor column / row. */
+uint32_t fb_get_cursor_col(void);
+uint32_t fb_get_cursor_row(void);
+
+/*
+ * Print a string at the current cursor position, advancing the cursor.
+ *   '\n'  — move to column 0 of the next row; scroll if at bottom.
+ *   '\b'  — erase the previous character (move back, draw space, move back).
+ *   Other — draw character and advance column; wrap+scroll at right edge.
+ */
 void fb_puts(const char *s, uint32_t fg, uint32_t bg);
 
 #endif /* FRAMEBUFFER_H */
