@@ -12,14 +12,15 @@
  *  7.  Switch RSP to kernel BSS stack.
  *  8.  vmm_init()
  *  9.  heap_init()
- * 10.  ata_init()   — detect IDE drives
- * 11.  vfs_mount()  — mount FAT32 on slave drive
- * 12.  FAT32 demo   — list root dir, read HELLO.TXT
- * 13.  pic_init()   — remap IRQs, mask all lines
- * 14.  pit_init()   — 1000 Hz timer, unmask IRQ 0
- * 15.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
- * 16.  sti           — enable interrupts
- * 17.  Keyboard echo demo with uptime reporting
+ * 10.  ata_init()      — detect IDE drives (master only)
+ * 11.  gpt_find_esp() — locate ESP start LBA on master drive
+ * 12.  vfs_mount()    — mount FAT32 at ESP's LBA offset
+ * 13.  FAT32 demo     — list root dir, read HELLO.TXT
+ * 14.  pic_init()      — remap IRQs, mask all lines
+ * 15.  pit_init()      — 1000 Hz timer, unmask IRQ 0
+ * 16.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
+ * 17.  sti             — enable interrupts
+ * 18.  Keyboard echo demo with uptime reporting
  */
 
 #include <stdint.h>
@@ -38,6 +39,7 @@
 #include "keyboard.h"
 #include "string.h"
 #include "ata.h"
+#include "gpt.h"
 #include "vfs.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
@@ -96,11 +98,13 @@ void kernel_main(BootInfo *info)
     heap_init();
     serial_puts("[OK] Heap\n");
 
-    /* ── ATA + FAT32 ──────────────────────────────────────────────────── */
+    /* ── ATA + GPT + FAT32 ───────────────────────────────────────────── */
     ata_init();
 
-    if (vfs_mount(ATA_DRIVE_SLAVE) == 0) {
-        serial_puts("[OK] FAT32 mounted on drive 1\n");
+    uint32_t esp_lba = gpt_find_esp(ATA_DRIVE_MASTER);
+
+    if (esp_lba != 0 && vfs_mount(ATA_DRIVE_MASTER, esp_lba) == 0) {
+        serial_puts("[OK] FAT32 mounted on ESP\n");
         fb_puts("[OK] FAT32 mounted\n", COLOR_GREEN, COLOR_BLACK);
 
         /* List root directory. */
@@ -132,8 +136,8 @@ void kernel_main(BootInfo *info)
             serial_puts("[WARN] HELLO.TXT not found\n");
         }
     } else {
-        serial_puts("[WARN] No FAT32 disk on slave drive\n");
-        fb_puts("[WARN] No data disk\n", COLOR_YELLOW, COLOR_BLACK);
+        serial_puts("[WARN] Could not mount ESP\n");
+        fb_puts("[WARN] Could not mount ESP\n", COLOR_YELLOW, COLOR_BLACK);
     }
 
     pic_init();

@@ -48,9 +48,9 @@ static void to_fat83(const char *in, char out[11])
 
 /* ── Public API ───────────────────────────────────────────────────────────*/
 
-int vfs_mount(uint8_t ata_drive)
+int vfs_mount(uint8_t ata_drive, uint32_t esp_lba)
 {
-    return fat32_init(ata_drive);
+    return fat32_init(ata_drive, esp_lba);
 }
 
 int vfs_open(const char *path, vfs_file_t *out)

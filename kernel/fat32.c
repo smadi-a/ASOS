@@ -86,9 +86,10 @@ typedef struct __attribute__((packed)) {
 /* ── Module globals populated by fat32_init() ────────────────────────────*/
 
 static uint8_t  g_drive;          /* ATA drive number                     */
+static uint32_t g_part_lba;       /* First sector of the FAT32 partition  */
 static uint8_t  g_spc;            /* Sectors per cluster                  */
-static uint32_t g_fat_lba;        /* LBA of the first FAT                 */
-static uint32_t g_data_lba;       /* LBA of the data region (cluster 2)   */
+static uint32_t g_fat_lba;        /* LBA of first FAT (rel. to partition) */
+static uint32_t g_data_lba;       /* LBA of data region  (rel. to part.)  */
 static uint32_t g_root_cluster;   /* First cluster of the root directory  */
 
 /* Re-used 512-byte I/O buffer. */
@@ -98,7 +99,8 @@ static uint8_t g_sec[512];
 
 static int read_sec(uint32_t lba)
 {
-    return ata_read_sectors(g_drive, lba, 1, g_sec);
+    /* All internal LBA values are relative to the partition start. */
+    return ata_read_sectors(g_drive, g_part_lba + lba, 1, g_sec);
 }
 
 /*
@@ -251,12 +253,13 @@ static int cb_find(const FAT32DirEnt *ent, void *ctx_v)
 
 /* ── Public API ───────────────────────────────────────────────────────────*/
 
-int fat32_init(uint8_t ata_drive)
+int fat32_init(uint8_t ata_drive, uint32_t partition_start_lba)
 {
-    g_drive = ata_drive;
+    g_drive    = ata_drive;
+    g_part_lba = partition_start_lba;
 
-    /* Read the Volume Boot Record (sector 0 of a raw FAT32 image). */
-    if (ata_read_sectors(g_drive, 0, 1, g_sec) != 0) {
+    /* Read the Volume Boot Record (sector 0 relative to partition start). */
+    if (read_sec(0) != 0) {
         serial_puts("[FAT32] I/O error reading VBR\n");
         return -1;
     }

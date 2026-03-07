@@ -29,13 +29,18 @@ typedef struct {
 } fat32_dirent_t;
 
 /*
- * Mount a raw FAT32 volume from the given ATA drive.
- * Reads the BPB from sector 0, validates the FAT32 signature, caches key
- * geometry.  Call once before any other fat32_* function.
+ * Mount a FAT32 volume from the given ATA drive.
+ * 'partition_start_lba' is the first sector of the FAT32 partition (e.g.
+ * the ESP start LBA from GPT).  All internal sector numbers are relative
+ * to this offset.  Pass 0 for a raw, unpartitioned FAT32 image.
+ *
+ * Reads the BPB from sector partition_start_lba+0, validates the FAT32
+ * signature, and caches key geometry.  Call once before any other fat32_*
+ * function.
  *
  * Returns 0 on success, -1 if the drive is missing or not FAT32.
  */
-int fat32_init(uint8_t ata_drive);
+int fat32_init(uint8_t ata_drive, uint32_t partition_start_lba);
 
 /*
  * List all entries in the root directory.
