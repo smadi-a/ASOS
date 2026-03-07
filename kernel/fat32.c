@@ -13,7 +13,8 @@
  *  • Long File Name (LFN) entries (attr == 0x0F) are skipped; only 8.3
  *    short entries are returned to callers.
  *
- *  • Cluster indices < 2 and ≥ 0x0FFFFFF8 are treated as end-of-chain.
+ *  • Cluster indices < 2, == 0x0FFFFFF7 (bad cluster), or ≥ 0x0FFFFFF8
+ *    (end-of-chain) all terminate chain traversal.
  */
 
 #include "fat32.h"
@@ -119,7 +120,10 @@ static uint32_t next_cluster(uint32_t cluster)
                  | ((uint32_t)g_sec[fat_off + 2] << 16)
                  | ((uint32_t)g_sec[fat_off + 3] << 24);
 
-    return val & FAT32_MASK;
+    val &= FAT32_MASK;
+    /* Treat bad-cluster marker (0x0FFFFFF7) as end-of-chain. */
+    if (val >= 0x0FFFFFF7U) return FAT32_EOC;
+    return val;
 }
 
 /* Return the LBA of the first sector of the given cluster. */
@@ -188,6 +192,12 @@ static void build_display_name(const FAT32DirEnt *ent, char *out)
 
 /* ── Directory callbacks ──────────────────────────────────────────────────*/
 
+/* Uppercase a single byte (ASCII only — FAT short names are ASCII). */
+static uint8_t to_upper(uint8_t c)
+{
+    return (c >= 'a' && c <= 'z') ? (uint8_t)(c - 32U) : c;
+}
+
 typedef struct {
     fat32_dirent_t *entries;
     uint32_t        max;
@@ -223,12 +233,13 @@ static int cb_find(const FAT32DirEnt *ent, void *ctx_v)
     /* Skip volume labels and directories. */
     if (ent->attr & (ATTR_VOLUME_ID | ATTR_DIRECTORY)) return 0;
 
-    /* Compare 11-character FAT name (8 name + 3 ext). */
+    /* Compare 11-character FAT name (8 name + 3 ext), case-insensitive.
+     * Directory entries are always uppercase; uppercase the input side only. */
     for (int i = 0; i < 8; i++) {
-        if (ent->name[i] != (uint8_t)ctx->name11[i]) return 0;
+        if (ent->name[i] != to_upper((uint8_t)ctx->name11[i])) return 0;
     }
     for (int i = 0; i < 3; i++) {
-        if (ent->ext[i] != (uint8_t)ctx->name11[8 + i]) return 0;
+        if (ent->ext[i] != to_upper((uint8_t)ctx->name11[8 + i])) return 0;
     }
 
     ctx->result.first_cluster = ((uint32_t)ent->first_cluster_hi << 16)
@@ -247,6 +258,12 @@ int fat32_init(uint8_t ata_drive)
     /* Read the Volume Boot Record (sector 0 of a raw FAT32 image). */
     if (ata_read_sectors(g_drive, 0, 1, g_sec) != 0) {
         serial_puts("[FAT32] I/O error reading VBR\n");
+        return -1;
+    }
+
+    /* Mandatory boot sector signature at bytes 510-511 (0x55 0xAA). */
+    if (g_sec[510] != 0x55U || g_sec[511] != 0xAAU) {
+        serial_puts("[FAT32] Bad boot sector signature\n");
         return -1;
     }
 
