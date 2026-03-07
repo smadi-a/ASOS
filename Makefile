@@ -104,10 +104,8 @@ BUILD_KN := $(BUILD)/kernel
 
 # ── Disk image ─────────────────────────────────────────────────────────────
 
-DISK_IMG       := $(BUILD)/asos.img
-DATADISK       := $(BUILD)/datadisk.img
-VDI            := $(BUILD)/asos.vdi
-DATADISK_VDI   := $(BUILD)/datadisk.vdi
+DISK_IMG   := $(BUILD)/asos.img
+VDI        := $(BUILD)/asos.vdi
 IMG_SIZE   := 64   # MiB — plenty for a FAT32 ESP + tiny kernel
 
 # The ESP partition starts at sector 2048 (1 MiB offset) by convention.
@@ -182,6 +180,7 @@ KERNEL_C_SRCS := \
     kernel/ring_buffer.c \
     kernel/keyboard.c \
     kernel/ata.c \
+    kernel/gpt.c \
     kernel/fat32.c \
     kernel/vfs.c
 
@@ -201,16 +200,15 @@ KERNEL_ELF := $(BUILD)/kernel.elf
 # outputs from causing silent skips on the next make invocation.
 .DELETE_ON_ERROR:
 
-.PHONY: all run clean deps check-tools vdi datadisk vdi-data
+.PHONY: all run clean deps check-tools vdi
 
-all: check-tools $(VDI) $(DATADISK_VDI)
+all: check-tools $(VDI)
 	@echo ""
 	@echo "Build complete."
 	@echo "  Boot disk  : $(DISK_IMG)  /  $(VDI)"
-	@echo "  Data disk  : $(DATADISK)  /  $(DATADISK_VDI)"
 	@echo "  QEMU       : make run"
-	@echo "  VirtualBox : attach $(VDI) as Primary Master,"
-	@echo "               attach $(DATADISK_VDI) as Primary Slave (IDE)"
+	@echo "  VirtualBox : attach $(VDI) to an IDE controller as Primary Master"
+	@echo "               (IMPORTANT: use IDE controller, NOT SATA/AHCI)"
 
 # ── Tool availability check ────────────────────────────────────────────────
 
@@ -324,14 +322,14 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) | $(BUILD)
 	# 6. Copy the kernel ELF.
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(KERNEL_ELF) ::/EFI/asos/kernel.elf
 
+	# 7. Write test files into the root of the ESP.
+	#    These are read back by the kernel via FAT32 to verify the driver.
+	printf 'Hello from ASOS filesystem!\n' > $(BUILD)/HELLO.TXT
+	printf 'The quick brown fox jumps over the lazy dog.\n' > $(BUILD)/TEST.TXT
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(BUILD)/HELLO.TXT ::HELLO.TXT
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(BUILD)/TEST.TXT  ::TEST.TXT
+
 	@echo "Disk image ready: $(DISK_IMG)"
-
-# ── Data disk (FAT32 raw image for ATA slave) ──────────────────────────────
-
-datadisk: $(DATADISK)
-
-$(DATADISK): tools/mkdatadisk.sh | $(BUILD)
-	MFORMAT=$(MFORMAT) MCOPY=$(MCOPY) bash tools/mkdatadisk.sh $(DATADISK)
 
 # ── QEMU ───────────────────────────────────────────────────────────────────
 #
@@ -345,21 +343,22 @@ $(DATADISK): tools/mkdatadisk.sh | $(BUILD)
 # Remove -nographic and add -vga std if you want to see the framebuffer
 # in a QEMU window.
 
-run: $(DISK_IMG) $(DATADISK)
+run: $(DISK_IMG)
 ifeq ($(OVMF),)
 	$(error OVMF firmware not found. Run: make deps)
 endif
 	$(QEMU) \
 	    -drive if=pflash,format=raw,readonly=on,file=$(OVMF) \
 	    -drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk \
-	    -drive file=$(DATADISK),format=raw,if=ide,index=1,media=disk \
 	    -m 512M \
 	    -nographic \
 	    -no-reboot
 
 # ── VirtualBox disk image ──────────────────────────────────────────────────
-
-VDI := $(BUILD)/asos.vdi
+#
+# Attach the resulting VDI to an IDE controller (Primary Master) in
+# VirtualBox.  The kernel's ATA PIO driver targets the primary IDE channel
+# (ports 0x1F0-0x1F7).  A SATA/AHCI controller will NOT work.
 
 vdi: $(VDI)
 
@@ -368,13 +367,6 @@ $(VDI): $(DISK_IMG)
 	rm -f $(VDI)
 	VBoxManage convertfromraw $< $@ --format VDI
 	@echo "VDI ready: $(VDI)"
-
-vdi-data: $(DATADISK_VDI)
-
-$(DATADISK_VDI): $(DATADISK)
-	rm -f $(DATADISK_VDI)
-	VBoxManage convertfromraw $< $@ --format VDI
-	@echo "Data disk VDI ready: $(DATADISK_VDI)"
 
 # ── Local dependency bootstrap ─────────────────────────────────────────────
 #

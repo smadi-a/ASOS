@@ -21,12 +21,13 @@ typedef struct {
 typedef fat32_dirent_t vfs_dirent_t;
 
 /*
- * Mount the FAT32 volume on the given ATA drive (ATA_DRIVE_MASTER /
- * ATA_DRIVE_SLAVE).  Must be called before any other vfs_* function.
+ * Mount the FAT32 volume on 'ata_drive' starting at 'esp_lba' (the first
+ * sector of the FAT32 partition, as returned by gpt_find_esp()).
+ * Must be called before any other vfs_* function.
  *
  * Returns 0 on success, -1 on error.
  */
-int vfs_mount(uint8_t ata_drive);
+int vfs_mount(uint8_t ata_drive, uint32_t esp_lba);
 
 /*
  * Open a file.  path must be an absolute path to a root-directory file,
