@@ -12,6 +12,7 @@
 #include "isr.h"
 #include "io.h"
 #include "serial.h"
+#include "scheduler.h"
 #include <stdint.h>
 
 #define PIT_CMD    0x43   /* command register (write-only)   */
@@ -25,8 +26,8 @@ static volatile uint64_t g_ticks = 0;
 
 static void pit_irq_handler(InterruptFrame *frame)
 {
-    (void)frame;
     g_ticks++;
+    scheduler_tick(frame);
     /* EOI is sent by isr_handler() after this callback returns. */
 }
 
