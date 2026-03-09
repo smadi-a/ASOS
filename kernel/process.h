@@ -32,9 +32,10 @@ typedef struct task {
     void         (*entry)(void);       /* Entry point (for first-run wrapper) */
     uint64_t       time_slice_remaining; /* Ticks before preemption        */
 
-    /* Future milestones — unused for now. */
-    uint64_t      *page_table;         /* PML4 phys addr (NULL = kernel)   */
-    uint64_t       user_stack_base;    /* User stack (0 = kernel thread)   */
+    uint64_t       pml4_phys;          /* PML4 phys addr (0 = kernel)      */
+    uint64_t       user_entry_virt;    /* User-space entry VA              */
+    uint64_t       user_stack_top_virt;/* Top of user stack VA             */
+    int            has_been_preempted; /* Set once user task is preempted   */
 
     struct task   *next;               /* Ready-queue linked list          */
 } task_t;
@@ -45,5 +46,13 @@ typedef struct task {
  * entry_point on first switch.  Returns the new task (state = CREATED).
  */
 task_t *task_create_kernel(const char *name, void (*entry_point)(void));
+
+/*
+ * Create a ring-3 user process.  Copies code_size bytes from entry_point
+ * (kernel VA) to freshly mapped user pages at 0x400000.  Allocates a
+ * 16 KB user stack and a 16 KB kernel stack.
+ */
+task_t *task_create_user(const char *name, void (*entry_point)(void),
+                         size_t code_size);
 
 #endif /* PROCESS_H */

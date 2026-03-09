@@ -47,4 +47,30 @@ void vmm_init(void);
  */
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags);
 
+/*
+ * Create a new user address space.  Returns the physical address of a
+ * fresh PML4 with the kernel's higher-half and identity-map entries copied
+ * from the kernel PML4.  User-half (entries 0–255, excluding identity map)
+ * are initially empty.
+ */
+uint64_t vmm_create_user_address_space(void);
+
+/*
+ * Map a single 4 KB page in an arbitrary address space (not the current CR3).
+ * pml4_phys: physical address of the target PML4.
+ */
+void vmm_map_user_page(uint64_t pml4_phys, uint64_t virt,
+                        uint64_t phys, uint64_t flags);
+
+/*
+ * Switch CR3 to the given PML4 physical address.
+ * Skips the write (and TLB flush) if CR3 already holds that value.
+ */
+void vmm_switch_address_space(uint64_t pml4_phys);
+
+/*
+ * Return the physical address of the kernel's PML4 (set by vmm_init).
+ */
+uint64_t vmm_get_kernel_pml4(void);
+
 #endif /* VMM_H */

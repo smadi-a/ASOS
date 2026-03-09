@@ -144,3 +144,66 @@ void vmm_init(void)
 
     serial_puts("[VMM] Page tables active. Null guard at 0x0-0x1FFFFF.\n");
 }
+
+/* ── Per-process address spaces ──────────────────────────────────────────*/
+
+uint64_t vmm_get_kernel_pml4(void)
+{
+    return g_pml4_phys;
+}
+
+uint64_t vmm_create_user_address_space(void)
+{
+    uint64_t new_phys = pmm_alloc_frame();          /* zeroed by PMM */
+    uint64_t *new_pml4 = (uint64_t *)(uintptr_t)new_phys;
+    uint64_t *kern_pml4 = (uint64_t *)(uintptr_t)g_pml4_phys;
+
+    /* Do NOT copy PML4[0] (identity map) — it uses 2 MB large pages
+     * which conflict with the 4 KB user-page mappings we place in
+     * the low half.  Kernel code during interrupts only needs the
+     * higher-half entries.  PML4[0] in user address spaces starts
+     * empty; vmm_map_user_page builds fresh subtrees there. */
+
+    /* Copy higher-half entries (PML4[256..511]) — kernel mappings. */
+    for (int i = 256; i < 512; i++)
+        new_pml4[i] = kern_pml4[i];
+
+    return new_phys;
+}
+
+/*
+ * get_or_create_user — same as get_or_create but operates on an
+ * arbitrary page table accessed via identity mapping.
+ */
+static uint64_t *get_or_create_user(uint64_t *table, uint64_t idx,
+                                     uint64_t flags)
+{
+    if (!(table[idx] & PTE_PRESENT)) {
+        uint64_t phys = pmm_alloc_frame();
+        table[idx] = phys | flags | PTE_PRESENT;
+    }
+    uint64_t child_phys = table[idx] & ~0xFFFULL;
+    return (uint64_t *)(uintptr_t)child_phys;
+}
+
+void vmm_map_user_page(uint64_t pml4_phys, uint64_t virt,
+                        uint64_t phys, uint64_t flags)
+{
+    uint64_t *pml4 = (uint64_t *)(uintptr_t)pml4_phys;
+    /* Intermediate entries must also carry USER + WRITABLE so the CPU
+     * permits user-mode access and future writes to the final page. */
+    uint64_t mid = PTE_WRITABLE | PTE_USER;
+    uint64_t *pdpt = get_or_create_user(pml4, pml4_idx(virt), mid);
+    uint64_t *pd   = get_or_create_user(pdpt, pdpt_idx(virt), mid);
+    uint64_t *pt   = get_or_create_user(pd,   pd_idx(virt),   mid);
+
+    pt[pt_idx(virt)] = phys | flags | PTE_PRESENT;
+}
+
+void vmm_switch_address_space(uint64_t pml4_phys)
+{
+    uint64_t cur;
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(cur));
+    if (cur != pml4_phys)
+        __asm__ volatile ("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
+}

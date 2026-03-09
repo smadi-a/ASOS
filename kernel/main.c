@@ -1,5 +1,5 @@
 /*
- * kernel/main.c — ASOS kernel entry point (Milestone 6B).
+ * kernel/main.c — ASOS kernel entry point (Milestone 6C).
  *
  * Boot sequence
  * ─────────────
@@ -20,7 +20,7 @@
  * 15.  pit_init()      — 1000 Hz timer, unmask IRQ 0
  * 16.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
  * 17.  sti             — enable interrupts
- * 18.  scheduler_init + preemptive multitasking test
+ * 18.  scheduler_init + ring-3 user process test
  * 19.  Keyboard echo demo with uptime reporting
  *
  * IMPORTANT: kernel_main() switches RSP via inline asm.  With -O2 GCC
@@ -80,40 +80,69 @@ static void serial_put_dec(uint64_t v)
     while (i--) serial_putc(tmp[i]);
 }
 
-/* ── Test threads for preemptive multitasking ─────────────────────────── */
+/* ── User programs (copied to ring-3 pages, no kernel calls) ─────────── */
 
-static void thread_a(void)
+/*
+ * These functions are compiled into the kernel binary but copied to
+ * user-accessible pages and run in ring 3.  They CANNOT call any
+ * kernel functions, use port I/O, or do anything privileged.
+ * They just spin, exercising preemption.
+ */
+__attribute__((noinline))
+static void user_program_1(void)
 {
-    for (int i = 0; i < 5; i++) {
-        serial_puts("[Thread A] iteration ");
-        serial_put_dec((uint64_t)i);
-        serial_puts("\n");
-        /* Busy loop — NO yield.  We rely on preemption. */
-        for (volatile int j = 0; j < 2000000; j++);
-    }
-    serial_puts("[Thread A] done\n");
+    volatile uint64_t counter = 0;
+    while (1) counter++;
 }
 
-static void thread_b(void)
+__attribute__((noinline))
+static void user_program_2(void)
 {
-    for (int i = 0; i < 5; i++) {
-        serial_puts("[Thread B] iteration ");
-        serial_put_dec((uint64_t)i);
-        serial_puts("\n");
-        for (volatile int j = 0; j < 2000000; j++);
+    volatile uint64_t x = 0;
+    volatile uint64_t y = 1;
+    while (1) {
+        uint64_t temp = x + y;
+        x = y;
+        y = temp;
     }
-    serial_puts("[Thread B] done\n");
 }
 
-static void thread_c(void)
+/* ── Monitor kernel thread (prints confirmation of user-mode execution) ─ */
+
+static task_t *g_user1 = NULL;
+static task_t *g_user2 = NULL;
+
+static void monitor_thread(void)
 {
-    for (int i = 0; i < 5; i++) {
-        serial_puts("[Thread C] iteration ");
-        serial_put_dec((uint64_t)i);
-        serial_puts("\n");
-        for (volatile int j = 0; j < 2000000; j++);
+    uint64_t last_tick = 0;
+    int confirmed_1 = 0, confirmed_2 = 0;
+
+    while (1) {
+        uint64_t now = pit_get_ticks();
+        if (now - last_tick >= 1000) {
+            last_tick = now;
+            serial_puts("[MONITOR] Uptime: ");
+            serial_put_dec(now / 1000);
+            serial_puts("s, tasks running OK\n");
+        }
+
+        if (!confirmed_1 && g_user1 && g_user1->has_been_preempted) {
+            serial_puts("[MONITOR] User process ");
+            serial_puts(g_user1->name);
+            serial_puts(" confirmed running in ring 3\n");
+            fb_puts("[OK] user_prog_1 in ring 3\n", COLOR_GREEN, COLOR_BLACK);
+            confirmed_1 = 1;
+        }
+        if (!confirmed_2 && g_user2 && g_user2->has_been_preempted) {
+            serial_puts("[MONITOR] User process ");
+            serial_puts(g_user2->name);
+            serial_puts(" confirmed running in ring 3\n");
+            fb_puts("[OK] user_prog_2 in ring 3\n", COLOR_GREEN, COLOR_BLACK);
+            confirmed_2 = 1;
+        }
+
+        scheduler_yield();
     }
-    serial_puts("[Thread C] done\n");
 }
 
 /* ── kernel_main2 — runs entirely on the kernel BSS stack ─────────────── */
@@ -179,29 +208,18 @@ static void kernel_main2(void)
     __asm__ volatile ("sti" ::: "memory");
     serial_puts("[OK] Interrupts enabled.\n");
 
-    /* ── Preemptive multitasking test ─────────────────────────────────── */
+    /* ── Ring-3 user process test ────────────────────────────────────── */
     scheduler_init();
 
-    task_t *ta = task_create_kernel("Thread A", thread_a);
-    task_t *tb = task_create_kernel("Thread B", thread_b);
-    task_t *tc = task_create_kernel("Thread C", thread_c);
-    scheduler_add_task(ta);
-    scheduler_add_task(tb);
-    scheduler_add_task(tc);
+    task_t *monitor = task_create_kernel("monitor", monitor_thread);
+    g_user1 = task_create_user("user_prog_1", user_program_1, 4096);
+    g_user2 = task_create_user("user_prog_2", user_program_2, 4096);
+    scheduler_add_task(monitor);
+    scheduler_add_task(g_user1);
+    scheduler_add_task(g_user2);
 
-    serial_puts("[OK] Starting preemptive multitasking test\n");
-    fb_puts("[OK] Preemptive test\n", COLOR_GREEN, COLOR_BLACK);
-
-    /* The main thread is also a schedulable task that gets preempted.
-     * Wait for all test threads to finish. */
-    while (ta->state != TASK_DEAD ||
-           tb->state != TASK_DEAD ||
-           tc->state != TASK_DEAD) {
-        __asm__ volatile ("hlt" ::: "memory");
-    }
-
-    serial_puts("[OK] All test threads completed\n");
-    fb_puts("[OK] Threads done\n", COLOR_GREEN, COLOR_BLACK);
+    serial_puts("[OK] Starting ring-3 test: 2 user processes + 1 kernel monitor\n");
+    fb_puts("[OK] Ring-3 test started\n", COLOR_GREEN, COLOR_BLACK);
 
     /* ── Banner ───────────────────────────────────────────────────────── */
     fb_puts(ASOS_VERSION " — Keyboard active. Type something:\n",

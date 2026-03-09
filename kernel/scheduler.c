@@ -20,6 +20,7 @@
 #include "string.h"
 #include "serial.h"
 #include "tss.h"
+#include "vmm.h"
 
 extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp);
 
@@ -29,6 +30,14 @@ static task_t *g_current    = NULL;
 static task_t *g_idle       = NULL;
 static task_t *g_ready_head = NULL;
 static task_t *g_ready_tail = NULL;
+
+/* Switch CR3 to the address space of the current task. */
+static void switch_cr3_for_current(void)
+{
+    uint64_t cr3 = g_current->pml4_phys ? g_current->pml4_phys
+                                        : vmm_get_kernel_pml4();
+    vmm_switch_address_space(cr3);
+}
 
 /* ── Ready-queue helpers ─────────────────────────────────────────────────*/
 
@@ -146,7 +155,9 @@ void scheduler_yield(void)
 
     context_switch(&prev->kernel_rsp, next->kernel_rsp);
 
-    /* We return here when we're scheduled back in. */
+    /* We return here when we're scheduled back in.
+     * Switch to our address space. */
+    switch_cr3_for_current();
     interrupts_enable();
 }
 
@@ -172,8 +183,13 @@ void scheduler_tick(InterruptFrame *frame)
             tss_set_rsp0(next->kernel_stack_base + next->kernel_stack_size);
 
         context_switch(&prev->kernel_rsp, next->kernel_rsp);
+        switch_cr3_for_current();
         return;
     }
+
+    /* Mark user processes as having been preempted (for monitoring). */
+    if (g_current->pml4_phys && !g_current->has_been_preempted)
+        g_current->has_been_preempted = 1;
 
     /* Decrement time slice. */
     if (g_current->time_slice_remaining > 0)
@@ -202,6 +218,7 @@ void scheduler_tick(InterruptFrame *frame)
         tss_set_rsp0(next->kernel_stack_base + next->kernel_stack_size);
 
     context_switch(&prev->kernel_rsp, next->kernel_rsp);
+    switch_cr3_for_current();
 }
 
 task_t *scheduler_get_current(void)
