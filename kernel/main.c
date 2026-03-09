@@ -1,5 +1,5 @@
 /*
- * kernel/main.c — ASOS kernel entry point (Milestone 5).
+ * kernel/main.c — ASOS kernel entry point (Milestone 6A).
  *
  * Boot sequence
  * ─────────────
@@ -20,7 +20,8 @@
  * 15.  pit_init()      — 1000 Hz timer, unmask IRQ 0
  * 16.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
  * 17.  sti             — enable interrupts
- * 18.  Keyboard echo demo with uptime reporting
+ * 18.  scheduler_init + cooperative multitasking test
+ * 19.  Keyboard echo demo with uptime reporting
  *
  * IMPORTANT: kernel_main() switches RSP via inline asm.  With -O2 GCC
  * omits the frame pointer and uses RSP-relative addressing for locals.
@@ -51,6 +52,8 @@
 #include "ata.h"
 #include "gpt.h"
 #include "vfs.h"
+#include "scheduler.h"
+#include "process.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
 
@@ -75,6 +78,41 @@ static void serial_put_dec(uint64_t v)
     int i = 0;
     while (v) { tmp[i++] = (char)('0' + (int)(v % 10)); v /= 10; }
     while (i--) serial_putc(tmp[i]);
+}
+
+/* ── Test threads for cooperative multitasking ────────────────────────── */
+
+static void thread_a(void)
+{
+    for (int i = 0; i < 5; i++) {
+        serial_puts("[Thread A] iteration ");
+        serial_put_dec((uint64_t)i);
+        serial_puts("\n");
+        scheduler_yield();
+    }
+    serial_puts("[Thread A] done\n");
+}
+
+static void thread_b(void)
+{
+    for (int i = 0; i < 5; i++) {
+        serial_puts("[Thread B] iteration ");
+        serial_put_dec((uint64_t)i);
+        serial_puts("\n");
+        scheduler_yield();
+    }
+    serial_puts("[Thread B] done\n");
+}
+
+static void thread_c(void)
+{
+    for (int i = 0; i < 5; i++) {
+        serial_puts("[Thread C] iteration ");
+        serial_put_dec((uint64_t)i);
+        serial_puts("\n");
+        scheduler_yield();
+    }
+    serial_puts("[Thread C] done\n");
 }
 
 /* ── kernel_main2 — runs entirely on the kernel BSS stack ─────────────── */
@@ -139,6 +177,29 @@ static void kernel_main2(void)
      * interpreted as a CPU exception. */
     __asm__ volatile ("sti" ::: "memory");
     serial_puts("[OK] Interrupts enabled.\n");
+
+    /* ── Cooperative multitasking test ────────────────────────────────── */
+    scheduler_init();
+
+    task_t *ta = task_create_kernel("Thread A", thread_a);
+    task_t *tb = task_create_kernel("Thread B", thread_b);
+    task_t *tc = task_create_kernel("Thread C", thread_c);
+    scheduler_add_task(ta);
+    scheduler_add_task(tb);
+    scheduler_add_task(tc);
+
+    serial_puts("[OK] Starting cooperative multitasking test\n");
+    fb_puts("[OK] Multitasking test\n", COLOR_GREEN, COLOR_BLACK);
+
+    /* Keep yielding until all test threads have exited. */
+    while (ta->state != TASK_DEAD ||
+           tb->state != TASK_DEAD ||
+           tc->state != TASK_DEAD) {
+        scheduler_yield();
+    }
+
+    serial_puts("[OK] All test threads completed\n");
+    fb_puts("[OK] Threads done\n", COLOR_GREEN, COLOR_BLACK);
 
     /* ── Banner ───────────────────────────────────────────────────────── */
     fb_puts(ASOS_VERSION " — Keyboard active. Type something:\n",

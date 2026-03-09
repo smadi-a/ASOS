@@ -182,11 +182,14 @@ KERNEL_C_SRCS := \
     kernel/ata.c \
     kernel/gpt.c \
     kernel/fat32.c \
-    kernel/vfs.c
+    kernel/vfs.c \
+    kernel/process.c \
+    kernel/scheduler.c
 
 KERNEL_ASM_SRCS := \
     kernel/gdt_flush.asm \
-    kernel/isr_stubs.asm
+    kernel/isr_stubs.asm \
+    kernel/context_switch.asm
 
 KERNEL_C_OBJS   := $(patsubst kernel/%.c,   $(BUILD_KN)/%.o, $(KERNEL_C_SRCS))
 KERNEL_ASM_OBJS := $(patsubst kernel/%.asm, $(BUILD_KN)/%.o, $(KERNEL_ASM_SRCS))
