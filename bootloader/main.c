@@ -359,6 +359,15 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
      */
     setup_page_tables();
 
+    /*
+     * Disable interrupts before switching page tables and jumping to the
+     * kernel.  Some UEFI implementations (notably VirtualBox) leave IF=1
+     * after ExitBootServices().  Any stale IRQ delivered before the kernel
+     * remaps the PIC would use the firmware's vector mapping, which can
+     * collide with CPU exception vectors and corrupt the ISR stack frame.
+     */
+    __asm__ volatile ("cli" ::: "memory");
+
     __asm__ volatile (
         "mov %0, %%cr3"
         :: "r"((UINT64)(UINTN)boot_pml4)

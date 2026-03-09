@@ -145,6 +145,7 @@ void fb_set_cursor(uint32_t col, uint32_t row)
     g_cursor_row = row;
 }
 
+
 uint32_t fb_get_cursor_col(void) { return g_cursor_col; }
 uint32_t fb_get_cursor_row(void) { return g_cursor_row; }
 

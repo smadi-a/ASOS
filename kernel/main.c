@@ -9,7 +9,7 @@
  *  4.  gdt_init()
  *  5.  idt_init()
  *  6.  pmm_init()
- *  7.  Switch RSP to kernel BSS stack.
+ *  7.  Switch RSP to kernel BSS stack → call kernel_main2().
  *  8.  vmm_init()
  *  9.  heap_init()
  * 10.  ata_init()      — detect IDE drives (master only)
@@ -21,6 +21,16 @@
  * 16.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
  * 17.  sti             — enable interrupts
  * 18.  Keyboard echo demo with uptime reporting
+ *
+ * IMPORTANT: kernel_main() switches RSP via inline asm.  With -O2 GCC
+ * omits the frame pointer and uses RSP-relative addressing for locals.
+ * After the RSP change, those RSP-relative offsets point into BSS
+ * instead of the real stack frame, silently corrupting globals.
+ *
+ * The fix is to split the function: kernel_main() does only the early
+ * init that needs the UEFI stack, switches RSP, and then calls
+ * kernel_main2() (marked noinline) so the compiler builds a fresh
+ * stack frame on the new stack.
  */
 
 #include <stdint.h>
@@ -67,31 +77,11 @@ static void serial_put_dec(uint64_t v)
     while (i--) serial_putc(tmp[i]);
 }
 
-/* ── kernel_main ──────────────────────────────────────────────────────────*/
+/* ── kernel_main2 — runs entirely on the kernel BSS stack ─────────────── */
 
-void kernel_main(BootInfo *info)
+__attribute__((noinline, noreturn))
+static void kernel_main2(void)
 {
-    clear_bss();
-
-    serial_init();
-    serial_puts(ASOS_VERSION "\n");
-
-    fb_init(&info->framebuffer);
-    fb_clear(COLOR_BLACK);
-    fb_set_cursor(0, 0);
-
-    gdt_init();
-    serial_puts("[OK] GDT\n");
-
-    idt_init();
-    serial_puts("[OK] IDT\n");
-
-    pmm_init(info);
-    serial_puts("[OK] PMM\n");
-
-    __asm__ volatile ("mov %0, %%rsp"
-        :: "r"((uint64_t)(uintptr_t)(g_kstack + KSTACK_SIZE)) : "memory");
-
     vmm_init();
     serial_puts("[OK] VMM\n");
 
@@ -189,4 +179,44 @@ void kernel_main(BootInfo *info)
             fb_puts(str, COLOR_WHITE, COLOR_BLACK);
         }
     }
+}
+
+/* ── kernel_main — entry from bootloader, runs on UEFI stack ─────────── */
+
+void kernel_main(BootInfo *info)
+{
+    clear_bss();
+
+    serial_init();
+    serial_puts(ASOS_VERSION "\n");
+
+    fb_init(&info->framebuffer);
+    fb_clear(COLOR_BLACK);
+    fb_set_cursor(0, 0);
+
+    gdt_init();
+    serial_puts("[OK] GDT\n");
+
+    idt_init();
+    serial_puts("[OK] IDT\n");
+
+    pmm_init(info);
+    serial_puts("[OK] PMM\n");
+
+    /*
+     * Switch to the kernel BSS stack and call kernel_main2().
+     *
+     * This MUST be done via a function call — not by continuing in the
+     * same function — because GCC with -O2 uses RSP-relative addressing
+     * for locals (frame pointer omitted).  After the inline RSP switch
+     * the compiler's RSP-relative offsets would land in BSS instead of
+     * the actual stack frame, silently corrupting kernel globals.
+     *
+     * By calling a noinline function the compiler emits a fresh prologue
+     * that builds a correct frame on the new stack.
+     */
+    __asm__ volatile ("mov %0, %%rsp"
+        :: "r"((uint64_t)(uintptr_t)(g_kstack + KSTACK_SIZE)) : "memory");
+
+    kernel_main2();
 }
