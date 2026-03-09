@@ -26,16 +26,14 @@ Languages of choice:
 - [x] Physical memory manager + virtual memory: Parse the UEFI memory map, build a physical frame allocator (bitmap or buddy), set up your own page tables (replacing the UEFI-provided ones), and get a kernel heap working (a simple slab or bump allocator to start). Let's go bitmap allocator for now. go with a simple free-list allocator. map the kernel at a higher-half virtual address
 - [x] Interrupts, keyboard, timer: PIC or APIC initialization, PS/2 keyboard driver (VirtualBox emulates this), PIT or APIC timer. After this, you can type characters and measure time. Let's go wit PIT  for now. Go PIT for now. Program it to fire at 1000 Hz (1ms tick), which gives us reasonable scheduling granularity later.
 - [x] Storage + FAT32 read support: ATA/AHCI driver (VirtualBox supports both), partition table parsing, read-only FAT32. You can now load files from disk. ATA PIO for now. Use a separate raw FAT32 disk image as a second drive. No partition table parsing at all, the entire disk is one FAT32 filesystem
-- [ ] Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
+- [ ] 6A, 6B, 6C: Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
 - [ ] Syscall interface + ELF loader: syscall/sysret on x86_64, a minimal syscall table (write, read, exit, exec), ELF64 loading from your FAT32 volume
 - [ ] Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
 - [ ] Swap bitmap allocator with a buddy allocator
-- [ ] Single disk setup: add a GPT parser and point the FAT32 driver at a specific partition's starting LBA instead of LBA 0
 - [ ] Write an AHCI driver that implements the same block device interface and swap it in
 - [ ] Drop in a slab allocator for better performance
 - [ ] Add APIC support and disable the PIC at that point
 - [ ] Refactor towards a microkernel
-- [ ] Building a V2 in Rust?
 
 ## Local Dev
 - `make` to build everything + compile the vdi disk files (boot disk + data disk)
