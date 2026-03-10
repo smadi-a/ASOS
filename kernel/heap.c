@@ -24,7 +24,7 @@
 #include "serial.h"
 #include <stdint.h>
 
-#define HEAP_INITIAL_FRAMES  64     /* 64 × 4 KB = 256 KB */
+#define HEAP_INITIAL_FRAMES  256    /* 256 × 4 KB = 1 MB */
 #define HEAP_ALIGN           16U
 #define SPLIT_THRESHOLD      32U    /* min usable bytes in remainder block */
 
@@ -62,7 +62,7 @@ void heap_init(void)
     g_head->next    = NULL;
     g_head->prev    = NULL;
 
-    serial_puts("[HEAP] Kernel heap: 256 KB at 0xFFFFFFFF90000000.\n");
+    serial_puts("[HEAP] Kernel heap: 1 MB at 0xFFFFFFFF90000000.\n");
 }
 
 /* ── kmalloc ──────────────────────────────────────────────────────────────*/

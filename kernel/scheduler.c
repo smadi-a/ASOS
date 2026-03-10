@@ -31,6 +31,37 @@ static task_t *g_idle       = NULL;
 static task_t *g_ready_head = NULL;
 static task_t *g_ready_tail = NULL;
 
+/* Global list of ALL tasks (regardless of state). */
+static task_t *g_all_head   = NULL;
+static task_t *g_all_tail   = NULL;
+
+static void all_list_add(task_t *t)
+{
+    t->all_prev = g_all_tail;
+    t->all_next = NULL;
+    if (g_all_tail)
+        g_all_tail->all_next = t;
+    else
+        g_all_head = t;
+    g_all_tail = t;
+}
+
+static void all_list_remove(task_t *t)
+{
+    if (t->all_prev)
+        t->all_prev->all_next = t->all_next;
+    else
+        g_all_head = t->all_next;
+
+    if (t->all_next)
+        t->all_next->all_prev = t->all_prev;
+    else
+        g_all_tail = t->all_prev;
+
+    t->all_prev = NULL;
+    t->all_next = NULL;
+}
+
 /* Switch CR3 to the address space of the current task. */
 static void switch_cr3_for_current(void)
 {
@@ -77,6 +108,7 @@ void scheduler_init(void)
     /* Create idle task (never goes into the ready queue). */
     g_idle = task_create_kernel("idle", idle_entry);
     g_idle->state = TASK_READY;
+    all_list_add(g_idle);
 
     /*
      * Wrap the currently-running main thread in a task_t.
@@ -91,6 +123,7 @@ void scheduler_init(void)
     memcpy(main_task->name, "main", 5);
 
     g_current = main_task;
+    all_list_add(main_task);
 
     serial_puts("[SCHED] Scheduler initialized.\n");
 }
@@ -102,6 +135,7 @@ void scheduler_add_task(task_t *task)
     task->state = TASK_READY;
     task->time_slice_remaining = TIME_SLICE_TICKS;
     enqueue(task);
+    all_list_add(task);
 
     interrupts_enable();
 
@@ -224,4 +258,38 @@ void scheduler_tick(InterruptFrame *frame)
 task_t *scheduler_get_current(void)
 {
     return g_current;
+}
+
+task_t *scheduler_find_dead_child(uint64_t parent_pid, int64_t target_pid)
+{
+    for (task_t *t = g_all_head; t; t = t->all_next) {
+        if (t->state != TASK_DEAD) continue;
+        if (t->parent_pid != parent_pid) continue;
+        if (target_pid != -1 && t->id != (uint64_t)target_pid) continue;
+        return t;
+    }
+    return NULL;
+}
+
+task_t *scheduler_find_task_by_pid(uint64_t pid)
+{
+    for (task_t *t = g_all_head; t; t = t->all_next) {
+        if (t->id == pid) return t;
+    }
+    return NULL;
+}
+
+void scheduler_cleanup_task(task_t *task)
+{
+    interrupts_disable();
+    all_list_remove(task);
+    interrupts_enable();
+
+    /* Free kernel stack (if allocated). */
+    if (task->kernel_stack_base)
+        kfree((void *)(uintptr_t)task->kernel_stack_base);
+
+    /* TODO: free user page tables and mapped physical frames. */
+
+    kfree(task);
 }

@@ -196,3 +196,45 @@ int puts(const char *s)
     write(1, "\n", 1);
     return 0;
 }
+
+int getchar(void)
+{
+    char c;
+    long n = read(0, &c, 1);
+    if (n <= 0) return EOF;
+    return (unsigned char)c;
+}
+
+char *gets_s(char *buf, size_t size)
+{
+    if (!buf || size == 0) return (void *)0;
+
+    size_t pos = 0;
+    while (pos < size - 1) {
+        int c = getchar();
+        if (c == EOF) {
+            if (pos == 0) return (void *)0;
+            break;
+        }
+
+        if (c == '\n' || c == '\r') {
+            putchar('\n');
+            break;
+        }
+
+        if (c == '\b' || c == 127) {
+            if (pos > 0) {
+                pos--;
+                /* Erase character on screen. */
+                write(1, "\b \b", 3);
+            }
+            continue;
+        }
+
+        buf[pos++] = (char)c;
+        putchar(c);  /* Echo */
+    }
+
+    buf[pos] = '\0';
+    return buf;
+}

@@ -17,5 +17,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
 
 int putchar(int c);
 int puts(const char *s);
+int getchar(void);
+char *gets_s(char *buf, size_t size);
 
 #endif /* _STDIO_H */

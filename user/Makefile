@@ -16,7 +16,7 @@ CFLAGS   := -ffreestanding -nostdlib -nostdinc -fno-builtin \
 
 LDFLAGS  := -T user.ld -nostdlib
 
-PROGRAMS := hello.elf
+PROGRAMS := hello.elf shell.elf echo.elf cat.elf
 
 .PHONY: all clean libc
 
@@ -25,11 +25,11 @@ all: libc $(PROGRAMS)
 libc:
 	$(MAKE) -C $(LIBC_DIR)
 
-hello.elf: hello.o $(LIBC_CRT) $(LIBC_LIB)
-	$(LD) $(LDFLAGS) -o $@ $(LIBC_CRT) hello.o $(LIBC_LIB)
+%.elf: %.o $(LIBC_CRT) $(LIBC_LIB)
+	$(LD) $(LDFLAGS) -o $@ $(LIBC_CRT) $< $(LIBC_LIB)
 
-hello.o: hello.c
-	$(CC) $(CFLAGS) -c hello.c -o hello.o
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
 	rm -f *.o *.elf

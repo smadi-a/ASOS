@@ -29,6 +29,7 @@ Languages of choice:
 - [x] 6A, 6B, 6C: Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
 - [x] 7A, 7B: Syscall interface + ELF loader: syscall/sysret on x86_64, a minimal syscall table (write, read, exit, exec), ELF64 loading from your FAT32 volume
 - [x] 8A, 8B: Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
+- [ ] Rename clear, echo, ls, pid, halt to ASOS conventions
 - [ ] Custom ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, grep/find, top/proc, kill/halt, df/disk, chmod/perm, ping/test, ifconfig/ip, clear/clean)
 - [ ] PS/2 mouse Drivers
 - [ ] Graphics framebuffer library

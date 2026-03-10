@@ -14,5 +14,7 @@ int  getpid(void);
 void yield(void);
 void _exit(int status) __attribute__((noreturn));
 void *sbrk(intptr_t increment);
+long spawn(const char *path);
+long waitpid(long pid, int *status);
 
 #endif /* _UNISTD_H */
