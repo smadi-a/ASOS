@@ -71,3 +71,9 @@ int readdir(const char *path, dirent_t *entries, int max_entries)
     if (ret < 0) { errno = EIO; return -1; }
     return (int)ret;
 }
+
+long pidof(const char *name)
+{
+    int64_t ret = __syscall1(SYS_PIDOF, (uint64_t)(uintptr_t)name);
+    return (long)ret;
+}

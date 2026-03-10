@@ -444,6 +444,22 @@ static int64_t sys_readdir(uint64_t path_addr, uint64_t buf_addr,
     return (int64_t)count;
 }
 
+static int64_t sys_pidof(uint64_t name_addr)
+{
+    if (name_addr >= USER_ADDR_LIMIT) return -1;
+
+    const char *user_name = (const char *)(uintptr_t)name_addr;
+    char name[32];
+    int i;
+    for (i = 0; i < 31 && user_name[i]; i++)
+        name[i] = user_name[i];
+    name[i] = '\0';
+
+    task_t *t = scheduler_find_task_by_name(name);
+    if (t) return (int64_t)t->id;
+    return -1;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -462,6 +478,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_WAITPID: return sys_waitpid(arg1, arg2);
     case SYS_SPAWN:   return sys_spawn(arg1, arg2);
     case SYS_READDIR: return sys_readdir(arg1, arg2, arg3);
+    case SYS_PIDOF:   return sys_pidof(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

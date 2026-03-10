@@ -279,6 +279,30 @@ task_t *scheduler_find_task_by_pid(uint64_t pid)
     return NULL;
 }
 
+static char sched_tolower(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+}
+
+task_t *scheduler_find_task_by_name(const char *name)
+{
+    for (task_t *t = g_all_head; t; t = t->all_next) {
+        if (t->state == TASK_DEAD || t->state == TASK_CREATED)
+            continue;
+        /* Case-insensitive compare. */
+        const char *a = name;
+        const char *b = t->name;
+        int match = 1;
+        while (*a || *b) {
+            if (sched_tolower(*a) != sched_tolower(*b)) { match = 0; break; }
+            if (*a) a++;
+            if (*b) b++;
+        }
+        if (match) return t;
+    }
+    return NULL;
+}
+
 void scheduler_cleanup_task(task_t *task)
 {
     interrupts_disable();
