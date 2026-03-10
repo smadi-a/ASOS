@@ -648,6 +648,170 @@ static int64_t sys_fsstat(uint64_t buf_addr)
     return 0;
 }
 
+/* ── File I/O syscalls ───────────────────────────────────────────────────*/
+
+#define FD_MIN 3
+#define FD_MAX (FD_MIN + MAX_OPEN_FILES - 1)
+
+static int64_t sys_fopen(uint64_t path_addr)
+{
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+
+    /* Copy path from user space. */
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    char path[256];
+    int i;
+    for (i = 0; i < 255 && user_path[i]; i++)
+        path[i] = user_path[i];
+    path[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+
+    /* Resolve against cwd. */
+    char resolved[256];
+    if (vfs_resolve_path(path, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    /* Switch to kernel CR3 for VFS access. */
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+
+    vfs_file_t file;
+    int rc = vfs_open(resolved, &file);
+
+    vmm_switch_address_space(cur->pml4_phys);
+
+    if (rc != 0) return -1;
+
+    /* Find a free fd slot. */
+    for (int fd = 0; fd < MAX_OPEN_FILES; fd++) {
+        if (!cur->fd_table[fd].in_use) {
+            cur->fd_table[fd].first_cluster = file._fat.first_cluster;
+            cur->fd_table[fd].file_size     = file._fat.size;
+            cur->fd_table[fd].offset        = 0;
+            cur->fd_table[fd].in_use        = 1;
+
+            serial_puts("[FOPEN] fd=");
+            sc_put_dec((uint64_t)(fd + FD_MIN));
+            serial_puts(" file=");
+            serial_puts(resolved);
+            serial_puts(" size=");
+            sc_put_dec(file._fat.size);
+            serial_puts("\n");
+
+            return (int64_t)(fd + FD_MIN);
+        }
+    }
+
+    return -1;  /* No free slots */
+}
+
+static int64_t sys_fread(uint64_t fd, uint64_t buf_addr, uint64_t count)
+{
+    if (buf_addr >= USER_ADDR_LIMIT) return -1;
+    if (fd < FD_MIN || fd > FD_MAX) return -1;
+
+    task_t *cur = scheduler_get_current();
+    int idx = (int)(fd - FD_MIN);
+    if (!cur->fd_table[idx].in_use) return -1;
+
+    if (count == 0) return 0;
+    if (count > 65536) count = 65536;
+
+    /* Reconstruct a vfs_file_t from the fd entry. */
+    vfs_file_t vf;
+    vf._fat.first_cluster = cur->fd_table[idx].first_cluster;
+    vf._fat.size          = cur->fd_table[idx].file_size;
+    vf.offset             = cur->fd_table[idx].offset;
+
+    /* We need kernel CR3 for FAT32 reads. But we also need to
+     * write to the user buffer. Read into a kernel stack buffer
+     * in chunks, then copy to user space. */
+    uint8_t *ubuf = (uint8_t *)(uintptr_t)buf_addr;
+    uint64_t total_read = 0;
+
+    while (total_read < count) {
+        uint8_t kbuf[512];
+        uint64_t chunk = count - total_read;
+        if (chunk > sizeof(kbuf)) chunk = sizeof(kbuf);
+
+        vmm_switch_address_space(vmm_get_kernel_pml4());
+
+        uint32_t got = 0;
+        int rc = vfs_read(&vf, kbuf, (uint32_t)chunk, &got);
+
+        vmm_switch_address_space(cur->pml4_phys);
+
+        if (rc != 0) break;
+        if (got == 0) break;
+
+        /* Copy to user buffer. */
+        for (uint32_t j = 0; j < got; j++)
+            ubuf[total_read + j] = kbuf[j];
+
+        total_read += got;
+    }
+
+    /* Update fd offset. */
+    cur->fd_table[idx].offset = vf.offset;
+
+    return (int64_t)total_read;
+}
+
+static int64_t sys_fclose(uint64_t fd)
+{
+    if (fd < FD_MIN || fd > FD_MAX) return -1;
+
+    task_t *cur = scheduler_get_current();
+    int idx = (int)(fd - FD_MIN);
+    if (!cur->fd_table[idx].in_use) return -1;
+
+    cur->fd_table[idx].in_use = 0;
+    return 0;
+}
+
+static int64_t sys_fsize(uint64_t fd)
+{
+    if (fd < FD_MIN || fd > FD_MAX) return -1;
+
+    task_t *cur = scheduler_get_current();
+    int idx = (int)(fd - FD_MIN);
+    if (!cur->fd_table[idx].in_use) return -1;
+
+    return (int64_t)cur->fd_table[idx].file_size;
+}
+
+static int64_t sys_fseek(uint64_t fd, uint64_t offset_raw, uint64_t whence)
+{
+    if (fd < FD_MIN || fd > FD_MAX) return -1;
+
+    task_t *cur = scheduler_get_current();
+    int idx = (int)(fd - FD_MIN);
+    if (!cur->fd_table[idx].in_use) return -1;
+
+    /* Build a temporary vfs_file_t to use vfs_seek. */
+    vfs_file_t vf;
+    vf._fat.first_cluster = cur->fd_table[idx].first_cluster;
+    vf._fat.size          = cur->fd_table[idx].file_size;
+    vf.offset             = cur->fd_table[idx].offset;
+
+    int rc = vfs_seek(&vf, (int64_t)offset_raw, (int)whence);
+    if (rc != 0) return -1;
+
+    cur->fd_table[idx].offset = vf.offset;
+    return 0;
+}
+
+static int64_t sys_ftell(uint64_t fd)
+{
+    if (fd < FD_MIN || fd > FD_MAX) return -1;
+
+    task_t *cur = scheduler_get_current();
+    int idx = (int)(fd - FD_MIN);
+    if (!cur->fd_table[idx].in_use) return -1;
+
+    return (int64_t)cur->fd_table[idx].offset;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -672,6 +836,12 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_GETCWD:  return sys_getcwd(arg1, arg2);
     case SYS_CHDIR:   return sys_chdir(arg1);
     case SYS_FSSTAT:  return sys_fsstat(arg1);
+    case SYS_FOPEN:   return sys_fopen(arg1);
+    case SYS_FREAD:   return sys_fread(arg1, arg2, arg3);
+    case SYS_FCLOSE:  return sys_fclose(arg1);
+    case SYS_FSIZE:   return sys_fsize(arg1);
+    case SYS_FSEEK:   return sys_fseek(arg1, arg2, arg3);
+    case SYS_FTELL:   return sys_ftell(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

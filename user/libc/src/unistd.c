@@ -114,3 +114,47 @@ int fsstat(fs_stat_t *stat)
     if (ret < 0) { errno = EIO; return -1; }
     return 0;
 }
+
+int fopen(const char *path)
+{
+    int64_t ret = __syscall1(SYS_FOPEN, (uint64_t)(uintptr_t)path);
+    if (ret < 0) { errno = ENOENT; return -1; }
+    return (int)ret;
+}
+
+long fread(int fd, void *buf, size_t count)
+{
+    int64_t ret = __syscall3(SYS_FREAD, (uint64_t)fd,
+                             (uint64_t)(uintptr_t)buf, (uint64_t)count);
+    if (ret < 0) { errno = EIO; return -1; }
+    return (long)ret;
+}
+
+int fclose(int fd)
+{
+    int64_t ret = __syscall1(SYS_FCLOSE, (uint64_t)fd);
+    if (ret < 0) { errno = EINVAL; return -1; }
+    return 0;
+}
+
+long fsize(int fd)
+{
+    int64_t ret = __syscall1(SYS_FSIZE, (uint64_t)fd);
+    if (ret < 0) { errno = EINVAL; return -1; }
+    return (long)ret;
+}
+
+int fseek(int fd, long offset, int whence)
+{
+    int64_t ret = __syscall3(SYS_FSEEK, (uint64_t)fd,
+                             (uint64_t)offset, (uint64_t)whence);
+    if (ret < 0) { errno = EINVAL; return -1; }
+    return 0;
+}
+
+long ftell(int fd)
+{
+    int64_t ret = __syscall1(SYS_FTELL, (uint64_t)fd);
+    if (ret < 0) { errno = EINVAL; return -1; }
+    return (long)ret;
+}

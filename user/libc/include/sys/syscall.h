@@ -22,6 +22,12 @@
 #define SYS_GETCWD   12
 #define SYS_CHDIR    13
 #define SYS_FSSTAT   14
+#define SYS_FOPEN    15
+#define SYS_FREAD    16
+#define SYS_FCLOSE   17
+#define SYS_FSIZE    18
+#define SYS_FSEEK    19
+#define SYS_FTELL    20
 
 static inline int64_t __syscall0(uint64_t num)
 {

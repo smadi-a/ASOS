@@ -56,4 +56,16 @@ typedef struct {
 
 int  fsstat(fs_stat_t *stat);
 
+/* File I/O. */
+#define SEEK_SET  0
+#define SEEK_CUR  1
+#define SEEK_END  2
+
+int     fopen(const char *path);
+long    fread(int fd, void *buf, size_t count);
+int     fclose(int fd);
+long    fsize(int fd);
+int     fseek(int fd, long offset, int whence);
+long    ftell(int fd);
+
 #endif /* _UNISTD_H */

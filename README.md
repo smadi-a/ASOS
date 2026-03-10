@@ -36,8 +36,8 @@ Languages of choice:
 - [x] Add more kernel syscalls SYS_KILL and SYS_PROCLIST or similar (to support the "end" command, which is similar to "kill")
 - [x] Add support for a working directory concept (to support the later implementation of the shell command "path", which is similar to "pwd")
 - [x] Add a syscall to report total/used/free space from the FAT32 volume (to support the upcoming shell "disk" command, which will be similar to the "df" command)
-- [ ] Implement support for file read with offset/size control
-- [ ] Add write support for the FAT32 file system
+- [x] Implement support for file read with offset/size control
+- [ ] A, B: Add write support for the FAT32 file system
 - [ ] Add basic ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, kill/end, df/disk, clear/clean)
 - [ ] PS/2 mouse Drivers
 - [ ] Graphics framebuffer library
