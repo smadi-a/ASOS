@@ -13,6 +13,8 @@
 #include "scheduler.h"
 #include "process.h"
 #include "gdt.h"
+#include "vmm.h"
+#include "pmm.h"
 #include <stdint.h>
 
 /* ── MSR addresses ───────────────────────────────────────────────────────*/
@@ -182,6 +184,45 @@ static void sys_yield(void)
     __asm__ volatile ("cli" ::: "memory");
 }
 
+static int64_t sys_sbrk(int64_t increment)
+{
+    task_t *cur = scheduler_get_current();
+
+    /* sbrk(0) returns the current break. */
+    if (increment == 0)
+        return (int64_t)cur->heap_break;
+
+    uint64_t old_break = cur->heap_break;
+    uint64_t new_break = old_break + (uint64_t)increment;
+
+    /* Bounds check. */
+    if (new_break < cur->heap_start || new_break > cur->heap_max)
+        return -1;
+
+    /* Map any new pages needed between old and new break.
+     * pmm_alloc_frame and vmm_map_user_page use the identity map,
+     * which is only present in the kernel page tables.  Switch CR3
+     * temporarily. */
+    uint64_t old_page = (old_break + 0xFFF) & ~0xFFFULL;
+    uint64_t new_page = (new_break + 0xFFF) & ~0xFFFULL;
+
+    if (old_page < new_page) {
+        uint64_t kernel_pml4 = vmm_get_kernel_pml4();
+        vmm_switch_address_space(kernel_pml4);
+
+        for (uint64_t page = old_page; page < new_page; page += 4096) {
+            uint64_t frame = pmm_alloc_frame();
+            vmm_map_user_page(cur->pml4_phys, page, frame,
+                              PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NO_EXEC);
+        }
+
+        vmm_switch_address_space(cur->pml4_phys);
+    }
+
+    cur->heap_break = new_break;
+    return (int64_t)old_break;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -196,6 +237,9 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_EXIT:    sys_exit((int)arg1); return 0;
     case SYS_GETPID:  return sys_getpid();
     case SYS_YIELD:   sys_yield(); return 0;
+    case SYS_SBRK:    return sys_sbrk((int64_t)arg1);
+    case SYS_WAITPID: return -1;   /* stub */
+    case SYS_SPAWN:   return -1;   /* stub */
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

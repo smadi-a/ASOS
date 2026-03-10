@@ -300,7 +300,8 @@ task_t *task_create_from_elf(const char *name,
     t->pml4_phys = vmm_create_user_address_space();
 
     /* Load the ELF into the new address space. */
-    uint64_t entry = elf_load(elf_data, elf_size, t->pml4_phys);
+    uint64_t highest_addr = 0;
+    uint64_t entry = elf_load(elf_data, elf_size, t->pml4_phys, &highest_addr);
     if (entry == 0) {
         serial_puts("[PROC] ELF load failed for ");
         serial_puts(name);
@@ -310,6 +311,11 @@ task_t *task_create_from_elf(const char *name,
         return NULL;
     }
     t->user_entry_virt = entry;
+
+    /* Set up user heap just above the highest mapped ELF segment. */
+    t->heap_start = highest_addr;
+    t->heap_break = highest_addr;
+    t->heap_max   = USER_STACK_VIRT;  /* Grow up to (but not into) the stack */
 
     /* Map user stack pages (read+write, no-execute). */
     for (int i = 0; i < USER_STACK_PAGES; i++) {

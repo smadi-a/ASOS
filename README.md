@@ -28,12 +28,12 @@ Languages of choice:
 - [x] Storage + FAT32 read support: ATA/AHCI driver (VirtualBox supports both), partition table parsing, read-only FAT32. You can now load files from disk. ATA PIO for now. Use a separate raw FAT32 disk image as a second drive. No partition table parsing at all, the entire disk is one FAT32 filesystem
 - [x] 6A, 6B, 6C: Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
 - [x] 7A, 7B: Syscall interface + ELF loader: syscall/sysret on x86_64, a minimal syscall table (write, read, exit, exec), ELF64 loading from your FAT32 volume
-- [ ] Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
-- [ ] Swap bitmap allocator with a buddy allocator
-- [ ] Write an AHCI driver that implements the same block device interface and swap it in
-- [ ] Drop in a slab allocator for better performance
-- [ ] Add APIC support and disable the PIC at that point
-- [ ] Refactor towards a microkernel
+- [ ] 8A, 8B: Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
+- [ ] Enhancement: Swap bitmap allocator with a buddy allocator
+- [ ] Enhancement: Write an AHCI driver that implements the same block device interface and swap it in
+- [ ] Enhancement: Drop in a slab allocator for better performance
+- [ ] Enhancement: Add APIC support and disable the PIC at that point
+- [ ] Enhancement: Refactor towards a microkernel
 
 ## Local Dev
 - `make` to build everything + compile the vdi disk files (boot disk + data disk)

@@ -1,38 +1,36 @@
 # user/Makefile — Build standalone user-space ELF programs.
 #
-# Uses the same compiler as the kernel (host gcc on x86_64 Linux).
-# All programs are fully freestanding — no libc, no dynamic linking.
+# Links against libasos.a (user/libc) for libc functions.
 
 CC       := gcc
-ASM      := nasm
 LD       := ld
+
+LIBC_DIR := libc
+LIBC_INC := $(LIBC_DIR)/include
+LIBC_LIB := $(LIBC_DIR)/libasos.a
+LIBC_CRT := $(LIBC_DIR)/start.o
 
 CFLAGS   := -ffreestanding -nostdlib -nostdinc -fno-builtin \
             -fno-stack-protector -mno-red-zone \
-            -Wall -Wextra -O2
+            -Wall -Wextra -O2 -I$(LIBC_INC)
 
-ASMFLAGS := -f elf64
 LDFLAGS  := -T user.ld -nostdlib
 
 PROGRAMS := hello.elf
 
-.PHONY: all clean inspect
+.PHONY: all clean libc
 
-all: $(PROGRAMS)
+all: libc $(PROGRAMS)
 
-hello.elf: start.o hello.o
-	$(LD) $(LDFLAGS) -o $@ start.o hello.o
+libc:
+	$(MAKE) -C $(LIBC_DIR)
 
-hello.o: hello.c syscall.h
+hello.elf: hello.o $(LIBC_CRT) $(LIBC_LIB)
+	$(LD) $(LDFLAGS) -o $@ $(LIBC_CRT) hello.o $(LIBC_LIB)
+
+hello.o: hello.c
 	$(CC) $(CFLAGS) -c hello.c -o hello.o
-
-start.o: start.asm
-	$(ASM) $(ASMFLAGS) start.asm -o start.o
-
-inspect: hello.elf
-	readelf -h hello.elf
-	readelf -l hello.elf
-	readelf -S hello.elf
 
 clean:
 	rm -f *.o *.elf
+	$(MAKE) -C $(LIBC_DIR) clean
