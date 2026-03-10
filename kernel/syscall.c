@@ -383,6 +383,67 @@ static int64_t sys_sbrk(int64_t increment)
     return (int64_t)old_break;
 }
 
+/* User-space directory entry — must match user/libc/include/unistd.h. */
+typedef struct {
+    char     name[12];
+    uint32_t size;
+    uint8_t  is_directory;
+    uint8_t  padding[3];
+} sys_dirent_t;
+
+static int64_t sys_readdir(uint64_t path_addr, uint64_t buf_addr,
+                           uint64_t max_entries)
+{
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+    if (buf_addr  >= USER_ADDR_LIMIT) return -1;
+    if (max_entries == 0 || max_entries > 256) return -1;
+
+    /* Copy path from user space. */
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    char path[256];
+    int i;
+    for (i = 0; i < 255 && user_path[i]; i++)
+        path[i] = user_path[i];
+    path[i] = '\0';
+
+    /* Switch to kernel CR3 for VFS access. */
+    task_t *cur = scheduler_get_current();
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+
+    /* List directory via VFS. */
+    uint32_t cap = (max_entries < 64) ? (uint32_t)max_entries : 64;
+    vfs_dirent_t vfs_ents[64];
+    uint32_t count = 0;
+    int rc = vfs_list_dir(path, vfs_ents, cap, &count);
+
+    vmm_switch_address_space(cur->pml4_phys);
+
+    if (rc != 0) return -1;
+
+    /* Copy results to user buffer. */
+    sys_dirent_t *ubuf = (sys_dirent_t *)(uintptr_t)buf_addr;
+    for (uint32_t j = 0; j < count; j++) {
+        /* vfs_dirent_t.name is already "HELLO.ELF" display format. */
+        int k;
+        for (k = 0; k < 11 && vfs_ents[j].name[k]; k++)
+            ubuf[j].name[k] = vfs_ents[j].name[k];
+        ubuf[j].name[k] = '\0';
+        ubuf[j].size = vfs_ents[j].size;
+        ubuf[j].is_directory = vfs_ents[j].is_dir ? 1 : 0;
+        ubuf[j].padding[0] = 0;
+        ubuf[j].padding[1] = 0;
+        ubuf[j].padding[2] = 0;
+    }
+
+    serial_puts("[READDIR] Registered SYS_READDIR (syscall ");
+    sc_put_dec(SYS_READDIR);
+    serial_puts("), returned ");
+    sc_put_dec(count);
+    serial_puts(" entries\n");
+
+    return (int64_t)count;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -400,6 +461,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_SBRK:    return sys_sbrk((int64_t)arg1);
     case SYS_WAITPID: return sys_waitpid(arg1, arg2);
     case SYS_SPAWN:   return sys_spawn(arg1, arg2);
+    case SYS_READDIR: return sys_readdir(arg1, arg2, arg3);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);
