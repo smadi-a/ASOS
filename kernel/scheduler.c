@@ -1,12 +1,17 @@
 /*
- * kernel/scheduler.c — Cooperative round-robin scheduler.
+ * kernel/scheduler.c — Preemptive round-robin scheduler.
  *
  * Ready queue is a singly-linked list (head / tail pointers).
- * scheduler_yield() moves the current task to the back of the queue,
- * removes the next task from the front, and context-switches to it.
  *
- * An idle task exists as a fallback when the queue is empty and
- * the current task is dead.  It is never placed in the ready queue.
+ * scheduler_yield() — cooperative: moves current task to back of queue,
+ * dequeues the next, and context-switches.
+ *
+ * scheduler_tick() — preemptive: called from the PIT IRQ handler every
+ * 1 ms.  Decrements the current task's time slice; when it expires,
+ * performs a forced context switch.
+ *
+ * An idle task exists as a fallback when the queue is empty and the
+ * current task is dead.  It is never placed in the ready queue.
  */
 
 #include "scheduler.h"
@@ -14,13 +19,14 @@
 #include "heap.h"
 #include "string.h"
 #include "serial.h"
+#include "tss.h"
 
 extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp);
 
 /* ── State ───────────────────────────────────────────────────────────────*/
 
-static task_t *g_current   = NULL;
-static task_t *g_idle      = NULL;
+static task_t *g_current    = NULL;
+static task_t *g_idle       = NULL;
 static task_t *g_ready_head = NULL;
 static task_t *g_ready_tail = NULL;
 
@@ -72,6 +78,7 @@ void scheduler_init(void)
     memset(main_task, 0, sizeof(*main_task));
     main_task->id    = 0;
     main_task->state = TASK_RUNNING;
+    main_task->time_slice_remaining = TIME_SLICE_TICKS;
     memcpy(main_task->name, "main", 5);
 
     g_current = main_task;
@@ -81,8 +88,13 @@ void scheduler_init(void)
 
 void scheduler_add_task(task_t *task)
 {
+    interrupts_disable();
+
     task->state = TASK_READY;
+    task->time_slice_remaining = TIME_SLICE_TICKS;
     enqueue(task);
+
+    interrupts_enable();
 
     serial_puts("[SCHED] Added: ");
     serial_puts(task->name);
@@ -101,6 +113,8 @@ void scheduler_add_task(task_t *task)
 
 void scheduler_yield(void)
 {
+    interrupts_disable();
+
     task_t *prev = g_current;
     task_t *next = dequeue();
 
@@ -111,6 +125,7 @@ void scheduler_yield(void)
             next = g_idle;
         } else {
             /* We're the only runnable task — keep running. */
+            interrupts_enable();
             return;
         }
     }
@@ -122,7 +137,69 @@ void scheduler_yield(void)
     }
 
     next->state = TASK_RUNNING;
+    next->time_slice_remaining = TIME_SLICE_TICKS;
     g_current   = next;
+
+    /* Update TSS RSP0 for ring 3→0 transitions. */
+    if (next->kernel_stack_base)
+        tss_set_rsp0(next->kernel_stack_base + next->kernel_stack_size);
+
+    context_switch(&prev->kernel_rsp, next->kernel_rsp);
+
+    /* We return here when we're scheduled back in. */
+    interrupts_enable();
+}
+
+void scheduler_tick(InterruptFrame *frame)
+{
+    (void)frame;
+
+    if (!g_current) return;
+
+    /* If running the idle task, check if anything became ready. */
+    if (g_current == g_idle) {
+        task_t *next = dequeue();
+        if (!next) return;
+
+        next->state = TASK_RUNNING;
+        next->time_slice_remaining = TIME_SLICE_TICKS;
+
+        task_t *prev = g_idle;
+        g_idle->state = TASK_READY;
+        g_current = next;
+
+        if (next->kernel_stack_base)
+            tss_set_rsp0(next->kernel_stack_base + next->kernel_stack_size);
+
+        context_switch(&prev->kernel_rsp, next->kernel_rsp);
+        return;
+    }
+
+    /* Decrement time slice. */
+    if (g_current->time_slice_remaining > 0)
+        g_current->time_slice_remaining--;
+
+    if (g_current->time_slice_remaining > 0)
+        return;   /* Still has time left. */
+
+    /* Time slice expired — preempt. */
+    task_t *next = dequeue();
+    if (!next) {
+        /* No other task ready — reset slice and keep running. */
+        g_current->time_slice_remaining = TIME_SLICE_TICKS;
+        return;
+    }
+
+    task_t *prev = g_current;
+    prev->state = TASK_READY;
+    enqueue(prev);
+
+    next->state = TASK_RUNNING;
+    next->time_slice_remaining = TIME_SLICE_TICKS;
+    g_current = next;
+
+    if (next->kernel_stack_base)
+        tss_set_rsp0(next->kernel_stack_base + next->kernel_stack_size);
 
     context_switch(&prev->kernel_rsp, next->kernel_rsp);
 }

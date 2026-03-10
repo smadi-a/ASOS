@@ -56,4 +56,7 @@ void tss_init(void);
 /* Return a pointer to the single kernel TSS instance. */
 TSS *tss_get(void);
 
+/* Update TSS RSP0 — the kernel stack loaded on ring 3→0 transitions. */
+void tss_set_rsp0(uint64_t rsp0);
+
 #endif /* TSS_H */

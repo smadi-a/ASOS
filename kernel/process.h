@@ -29,6 +29,9 @@ typedef struct task {
     uint64_t       kernel_stack_base;  /* Bottom of allocated stack        */
     uint64_t       kernel_stack_size;  /* Size in bytes                    */
 
+    void         (*entry)(void);       /* Entry point (for first-run wrapper) */
+    uint64_t       time_slice_remaining; /* Ticks before preemption        */
+
     /* Future milestones — unused for now. */
     uint64_t      *page_table;         /* PML4 phys addr (NULL = kernel)   */
     uint64_t       user_stack_base;    /* User stack (0 = kernel thread)   */

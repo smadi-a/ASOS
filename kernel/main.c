@@ -1,5 +1,5 @@
 /*
- * kernel/main.c — ASOS kernel entry point (Milestone 6A).
+ * kernel/main.c — ASOS kernel entry point (Milestone 6B).
  *
  * Boot sequence
  * ─────────────
@@ -20,7 +20,7 @@
  * 15.  pit_init()      — 1000 Hz timer, unmask IRQ 0
  * 16.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
  * 17.  sti             — enable interrupts
- * 18.  scheduler_init + cooperative multitasking test
+ * 18.  scheduler_init + preemptive multitasking test
  * 19.  Keyboard echo demo with uptime reporting
  *
  * IMPORTANT: kernel_main() switches RSP via inline asm.  With -O2 GCC
@@ -80,7 +80,7 @@ static void serial_put_dec(uint64_t v)
     while (i--) serial_putc(tmp[i]);
 }
 
-/* ── Test threads for cooperative multitasking ────────────────────────── */
+/* ── Test threads for preemptive multitasking ─────────────────────────── */
 
 static void thread_a(void)
 {
@@ -88,7 +88,8 @@ static void thread_a(void)
         serial_puts("[Thread A] iteration ");
         serial_put_dec((uint64_t)i);
         serial_puts("\n");
-        scheduler_yield();
+        /* Busy loop — NO yield.  We rely on preemption. */
+        for (volatile int j = 0; j < 2000000; j++);
     }
     serial_puts("[Thread A] done\n");
 }
@@ -99,7 +100,7 @@ static void thread_b(void)
         serial_puts("[Thread B] iteration ");
         serial_put_dec((uint64_t)i);
         serial_puts("\n");
-        scheduler_yield();
+        for (volatile int j = 0; j < 2000000; j++);
     }
     serial_puts("[Thread B] done\n");
 }
@@ -110,7 +111,7 @@ static void thread_c(void)
         serial_puts("[Thread C] iteration ");
         serial_put_dec((uint64_t)i);
         serial_puts("\n");
-        scheduler_yield();
+        for (volatile int j = 0; j < 2000000; j++);
     }
     serial_puts("[Thread C] done\n");
 }
@@ -178,7 +179,7 @@ static void kernel_main2(void)
     __asm__ volatile ("sti" ::: "memory");
     serial_puts("[OK] Interrupts enabled.\n");
 
-    /* ── Cooperative multitasking test ────────────────────────────────── */
+    /* ── Preemptive multitasking test ─────────────────────────────────── */
     scheduler_init();
 
     task_t *ta = task_create_kernel("Thread A", thread_a);
@@ -188,14 +189,15 @@ static void kernel_main2(void)
     scheduler_add_task(tb);
     scheduler_add_task(tc);
 
-    serial_puts("[OK] Starting cooperative multitasking test\n");
-    fb_puts("[OK] Multitasking test\n", COLOR_GREEN, COLOR_BLACK);
+    serial_puts("[OK] Starting preemptive multitasking test\n");
+    fb_puts("[OK] Preemptive test\n", COLOR_GREEN, COLOR_BLACK);
 
-    /* Keep yielding until all test threads have exited. */
+    /* The main thread is also a schedulable task that gets preempted.
+     * Wait for all test threads to finish. */
     while (ta->state != TASK_DEAD ||
            tb->state != TASK_DEAD ||
            tc->state != TASK_DEAD) {
-        scheduler_yield();
+        __asm__ volatile ("hlt" ::: "memory");
     }
 
     serial_puts("[OK] All test threads completed\n");
