@@ -16,6 +16,14 @@ _Static_assert(sizeof(TSS) == 104, "TSS size must be 104 bytes");
 static TSS     g_tss                              __attribute__((aligned(16)));
 static uint8_t g_df_stack[DF_STACK_SIZE]          __attribute__((aligned(16)));
 
+/*
+ * Kernel RSP0 mirror — read by syscall_entry.asm to load the kernel stack.
+ * Updated alongside g_tss.rsp0 by tss_set_rsp0().
+ * Safe as a global because we are single-CPU and interrupts are disabled
+ * during syscall entry (FMASK clears IF).
+ */
+uint64_t g_syscall_rsp0 = 0;
+
 void tss_init(void)
 {
     /* Zero the entire TSS first. */
@@ -55,4 +63,5 @@ TSS *tss_get(void)
 void tss_set_rsp0(uint64_t rsp0)
 {
     g_tss.rsp0 = rsp0;
+    g_syscall_rsp0 = rsp0;
 }

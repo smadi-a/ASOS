@@ -54,6 +54,8 @@
 #include "vfs.h"
 #include "scheduler.h"
 #include "process.h"
+#include "syscall.h"
+#include "user_syscall.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
 
@@ -80,69 +82,79 @@ static void serial_put_dec(uint64_t v)
     while (i--) serial_putc(tmp[i]);
 }
 
-/* ── User programs (copied to ring-3 pages, no kernel calls) ─────────── */
+/* ── User programs (copied to ring-3 pages, run via syscalls) ────────── */
 
 /*
  * These functions are compiled into the kernel binary but copied to
- * user-accessible pages and run in ring 3.  They CANNOT call any
- * kernel functions, use port I/O, or do anything privileged.
- * They just spin, exercising preemption.
+ * user-accessible pages and run in ring 3.  They use syscall wrappers
+ * from user_syscall.h to interact with the kernel.
+ *
+ * IMPORTANT: String literals live in kernel .rodata and are NOT
+ * accessible from ring 3.  All strings must be stack-allocated char
+ * arrays so GCC emits immediate mov instructions at -O2.
  */
-__attribute__((noinline))
-static void user_program_1(void)
+
+/* Helper: write a decimal number to fd via syscalls.
+ * Must be always_inline — user code is copied to ring-3 pages, so
+ * any out-of-line call would jump to a wrong address. */
+__attribute__((always_inline))
+static inline void user_put_dec(int fd, uint64_t v)
 {
-    volatile uint64_t counter = 0;
-    while (1) counter++;
+    if (v == 0) {
+        char z = '0';
+        user_write(fd, &z, 1);
+        return;
+    }
+    char tmp[20];
+    int i = 0;
+    while (v) { tmp[i++] = (char)('0' + (int)(v % 10)); v /= 10; }
+    /* Reverse */
+    for (int a = 0, b = i - 1; a < b; a++, b--) {
+        char t = tmp[a]; tmp[a] = tmp[b]; tmp[b] = t;
+    }
+    user_write(fd, tmp, (uint64_t)i);
 }
 
 __attribute__((noinline))
-static void user_program_2(void)
+static void user_program_hello(void)
 {
-    volatile uint64_t x = 0;
-    volatile uint64_t y = 1;
-    while (1) {
-        uint64_t temp = x + y;
-        x = y;
-        y = temp;
-    }
+    /* "Hello from user space! My PID is: " — stack-allocated */
+    char msg[] = { 'H','e','l','l','o',' ','f','r','o','m',' ',
+                   'u','s','e','r',' ','s','p','a','c','e','!',' ',
+                   'M','y',' ','P','I','D',' ','i','s',':',' ','\0' };
+    char nl = '\n';
+
+    /* Write greeting. */
+    int len = 0;
+    while (msg[len]) len++;
+    user_write(1, msg, (uint64_t)len);
+
+    /* Write PID. */
+    int64_t pid = user_getpid();
+    user_put_dec(1, (uint64_t)pid);
+    user_write(1, &nl, 1);
+
+    user_exit(0);
 }
 
-/* ── Monitor kernel thread (prints confirmation of user-mode execution) ─ */
-
-static task_t *g_user1 = NULL;
-static task_t *g_user2 = NULL;
-
-static void monitor_thread(void)
+__attribute__((noinline))
+static void user_program_counter(void)
 {
-    uint64_t last_tick = 0;
-    int confirmed_1 = 0, confirmed_2 = 0;
+    /* "User counter: " — stack-allocated */
+    char prefix[] = { 'U','s','e','r',' ','c','o','u','n','t','e','r',':',' ','\0' };
+    char nl = '\n';
 
-    while (1) {
-        uint64_t now = pit_get_ticks();
-        if (now - last_tick >= 1000) {
-            last_tick = now;
-            serial_puts("[MONITOR] Uptime: ");
-            serial_put_dec(now / 1000);
-            serial_puts("s, tasks running OK\n");
-        }
+    int plen = 0;
+    while (prefix[plen]) plen++;
 
-        if (!confirmed_1 && g_user1 && g_user1->has_been_preempted) {
-            serial_puts("[MONITOR] User process ");
-            serial_puts(g_user1->name);
-            serial_puts(" confirmed running in ring 3\n");
-            fb_puts("[OK] user_prog_1 in ring 3\n", COLOR_GREEN, COLOR_BLACK);
-            confirmed_1 = 1;
-        }
-        if (!confirmed_2 && g_user2 && g_user2->has_been_preempted) {
-            serial_puts("[MONITOR] User process ");
-            serial_puts(g_user2->name);
-            serial_puts(" confirmed running in ring 3\n");
-            fb_puts("[OK] user_prog_2 in ring 3\n", COLOR_GREEN, COLOR_BLACK);
-            confirmed_2 = 1;
-        }
-
-        scheduler_yield();
+    for (uint64_t i = 0; i < 5; i++) {
+        user_write(1, prefix, (uint64_t)plen);
+        user_put_dec(1, i);
+        user_write(1, &nl, 1);
+        user_yield();
     }
+
+    user_exit(0);
 }
 
 /* ── kernel_main2 — runs entirely on the kernel BSS stack ─────────────── */
@@ -208,18 +220,20 @@ static void kernel_main2(void)
     __asm__ volatile ("sti" ::: "memory");
     serial_puts("[OK] Interrupts enabled.\n");
 
+    /* ── Syscall mechanism ─────────────────────────────────────────── */
+    syscall_init();
+    serial_puts("[OK] Syscall\n");
+
     /* ── Ring-3 user process test ────────────────────────────────────── */
     scheduler_init();
 
-    task_t *monitor = task_create_kernel("monitor", monitor_thread);
-    g_user1 = task_create_user("user_prog_1", user_program_1, 4096);
-    g_user2 = task_create_user("user_prog_2", user_program_2, 4096);
-    scheduler_add_task(monitor);
-    scheduler_add_task(g_user1);
-    scheduler_add_task(g_user2);
+    task_t *u1 = task_create_user("hello",   user_program_hello,   4096);
+    task_t *u2 = task_create_user("counter", user_program_counter, 4096);
+    scheduler_add_task(u1);
+    scheduler_add_task(u2);
 
-    serial_puts("[OK] Starting ring-3 test: 2 user processes + 1 kernel monitor\n");
-    fb_puts("[OK] Ring-3 test started\n", COLOR_GREEN, COLOR_BLACK);
+    serial_puts("[OK] Starting ring-3 syscall test: 2 user processes\n");
+    fb_puts("[OK] Syscall test started\n", COLOR_GREEN, COLOR_BLACK);
 
     /* ── Banner ───────────────────────────────────────────────────────── */
     fb_puts(ASOS_VERSION " — Keyboard active. Type something:\n",
