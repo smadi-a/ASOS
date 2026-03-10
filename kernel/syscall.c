@@ -114,14 +114,43 @@ static int64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t count)
     if (buf_addr + count > USER_ADDR_LIMIT) return -1;
 
     /*
-     * During a syscall, CR3 still points to the user's page tables.
-     * The user tables lack PML4[0] (identity map), so the framebuffer
-     * at physical 0x80000000 is not accessible.  Write to serial only.
-     * (Port I/O does not depend on page tables.)
+     * Copy user data to a kernel-stack buffer while CR3 still points
+     * to the user's page tables, then switch to kernel page tables
+     * to access the framebuffer (identity-mapped at physical 0x80000000).
+     * Serial port I/O doesn't need page tables, so it works in either.
      */
-    const char *buf = (const char *)(uintptr_t)buf_addr;
-    for (uint64_t i = 0; i < count; i++)
-        serial_putc(buf[i]);
+    const char *ubuf = (const char *)(uintptr_t)buf_addr;
+    task_t *cur = scheduler_get_current();
+
+    /* Process in chunks to avoid a large stack buffer. */
+    uint64_t written = 0;
+    while (written < count) {
+        char kbuf[256];
+        uint64_t chunk = count - written;
+        if (chunk > sizeof(kbuf)) chunk = sizeof(kbuf);
+
+        /* Copy from user space while user page tables are active. */
+        for (uint64_t i = 0; i < chunk; i++)
+            kbuf[i] = ubuf[written + i];
+
+        /* Write to serial (works with any CR3). */
+        for (uint64_t i = 0; i < chunk; i++)
+            serial_putc(kbuf[i]);
+
+        /* Switch to kernel CR3 to access the framebuffer. */
+        vmm_switch_address_space(vmm_get_kernel_pml4());
+
+        for (uint64_t i = 0; i < chunk; i++) {
+            char str[2] = { kbuf[i], '\0' };
+            fb_puts(str, COLOR_WHITE, COLOR_BLACK);
+        }
+
+        /* Switch back to user CR3. */
+        vmm_switch_address_space(cur->pml4_phys);
+
+        written += chunk;
+    }
+
     return (int64_t)count;
 }
 
