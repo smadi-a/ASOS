@@ -20,6 +20,8 @@
 #define SYS_PIDOF    9
 #define SYS_KILL     10
 #define SYS_PROCLIST 11
+#define SYS_GETCWD   12
+#define SYS_CHDIR    13
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

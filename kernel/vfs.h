@@ -9,6 +9,7 @@
 #define VFS_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include "fat32.h"
 
 /* An open file handle. */
@@ -59,5 +60,13 @@ static inline void vfs_close(vfs_file_t *f) { (void)f; }
  */
 int vfs_list_dir(const char *path, vfs_dirent_t *entries,
                  uint32_t max, uint32_t *count);
+
+/*
+ * Resolve a (possibly relative) path against the given cwd,
+ * producing a normalized absolute path in output.
+ * Returns 0 on success, -1 on error (buffer overflow).
+ */
+int vfs_resolve_path(const char *input, const char *cwd,
+                     char *output, size_t output_size);
 
 #endif /* VFS_H */

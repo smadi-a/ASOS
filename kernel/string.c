@@ -54,3 +54,33 @@ int memcmp(const void *a, const void *b, size_t n)
     }
     return 0;
 }
+
+size_t strlen(const char *s)
+{
+    size_t len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
+int strcmp(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
+
+char *strcpy(char *dest, const char *src)
+{
+    char *d = dest;
+    while ((*d++ = *src++)) {}
+    return dest;
+}
+
+char *strncpy(char *dest, const char *src, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n && src[i]; i++)
+        dest[i] = src[i];
+    for (; i < n; i++)
+        dest[i] = '\0';
+    return dest;
+}

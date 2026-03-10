@@ -18,6 +18,7 @@
 #include "vfs.h"
 #include "heap.h"
 #include "elf.h"
+#include "string.h"
 #include <stdint.h>
 
 /* ── MSR addresses ───────────────────────────────────────────────────────*/
@@ -235,16 +236,21 @@ static int64_t sys_spawn(uint64_t path_addr, uint64_t argv_addr)
     }
     path[255] = '\0';
 
-    /* Switch to kernel address space for VFS/PMM/VMM operations. */
+    /* Resolve path against cwd. */
     task_t *cur = scheduler_get_current();
+    char resolved[256];
+    if (vfs_resolve_path(path, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    /* Switch to kernel address space for VFS/PMM/VMM operations. */
     uint64_t kernel_pml4 = vmm_get_kernel_pml4();
     vmm_switch_address_space(kernel_pml4);
 
     /* Open the file. */
     vfs_file_t file;
-    if (vfs_open(path, &file) != 0) {
+    if (vfs_open(resolved, &file) != 0) {
         serial_puts("[SPAWN] File not found: ");
-        serial_puts(path);
+        serial_puts(resolved);
         serial_puts("\n");
         vmm_switch_address_space(cur->pml4_phys);
         return -1;
@@ -256,7 +262,7 @@ static int64_t sys_spawn(uint64_t path_addr, uint64_t argv_addr)
     uint32_t got = 0;
     if (vfs_read(&file, elf_buf, fsz, &got) != 0 || got == 0) {
         serial_puts("[SPAWN] Failed to read: ");
-        serial_puts(path);
+        serial_puts(resolved);
         serial_puts("\n");
         kfree(elf_buf);
         vfs_close(&file);
@@ -266,8 +272,8 @@ static int64_t sys_spawn(uint64_t path_addr, uint64_t argv_addr)
     vfs_close(&file);
 
     /* Extract filename for process name. */
-    const char *name = path;
-    for (const char *p = path; *p; p++) {
+    const char *name = resolved;
+    for (const char *p = resolved; *p; p++) {
         if (*p == '/') name = p + 1;
     }
 
@@ -284,6 +290,8 @@ static int64_t sys_spawn(uint64_t path_addr, uint64_t argv_addr)
     }
 
     child->parent_pid = cur->id;
+    strncpy(child->cwd, cur->cwd, sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
     scheduler_add_task(child);
 
     serial_puts("[SPAWN] Spawned ");
@@ -406,15 +414,20 @@ static int64_t sys_readdir(uint64_t path_addr, uint64_t buf_addr,
         path[i] = user_path[i];
     path[i] = '\0';
 
-    /* Switch to kernel CR3 for VFS access. */
+    /* Resolve path against cwd. */
     task_t *cur = scheduler_get_current();
+    char resolved[256];
+    if (vfs_resolve_path(path, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    /* Switch to kernel CR3 for VFS access. */
     vmm_switch_address_space(vmm_get_kernel_pml4());
 
     /* List directory via VFS. */
     uint32_t cap = (max_entries < 64) ? (uint32_t)max_entries : 64;
     vfs_dirent_t vfs_ents[64];
     uint32_t count = 0;
-    int rc = vfs_list_dir(path, vfs_ents, cap, &count);
+    int rc = vfs_list_dir(resolved, vfs_ents, cap, &count);
 
     vmm_switch_address_space(cur->pml4_phys);
 
@@ -556,6 +569,66 @@ static int64_t sys_proclist(uint64_t buf_addr, uint64_t max_entries)
     return (int64_t)count;
 }
 
+static int64_t sys_getcwd(uint64_t buf_addr, uint64_t size)
+{
+    if (buf_addr >= USER_ADDR_LIMIT) return -1;
+    if (size == 0) return -1;
+
+    task_t *cur = scheduler_get_current();
+    size_t cwd_len = strlen(cur->cwd);
+
+    if (cwd_len + 1 > size) return -1;  /* Buffer too small */
+
+    char *user_buf = (char *)(uintptr_t)buf_addr;
+    memcpy(user_buf, cur->cwd, cwd_len + 1);
+    return 0;
+}
+
+static int64_t sys_chdir(uint64_t path_addr)
+{
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+
+    /* Copy path from user space. */
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    char input[256];
+    int i;
+    for (i = 0; i < 255 && user_path[i]; i++)
+        input[i] = user_path[i];
+    input[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+
+    /* Resolve against current working directory. */
+    char resolved[256];
+    if (vfs_resolve_path(input, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    /* Verify the directory exists (only root "/" is fully supported by VFS).
+     * For root, we know it exists. For subdirectories, try listing.
+     * If VFS doesn't support subdirectories, skip validation — just
+     * store the path and let subsequent file ops fail naturally. */
+    if (strcmp(resolved, "/") != 0) {
+        /* TODO: validate subdirectory exists when VFS supports it. */
+    }
+
+    /* Store resolved path, ensuring it ends with '/'. */
+    strncpy(cur->cwd, resolved, sizeof(cur->cwd) - 2);
+    cur->cwd[sizeof(cur->cwd) - 1] = '\0';
+    size_t len = strlen(cur->cwd);
+    if (len > 0 && cur->cwd[len - 1] != '/') {
+        cur->cwd[len] = '/';
+        cur->cwd[len + 1] = '\0';
+    }
+
+    serial_puts("[VFS] Task ");
+    sc_put_dec(cur->id);
+    serial_puts(" cwd changed to: ");
+    serial_puts(cur->cwd);
+    serial_puts("\n");
+
+    return 0;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -577,6 +650,8 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_PIDOF:   return sys_pidof(arg1);
     case SYS_KILL:    return sys_kill(arg1);
     case SYS_PROCLIST:return sys_proclist(arg1, arg2);
+    case SYS_GETCWD:  return sys_getcwd(arg1, arg2);
+    case SYS_CHDIR:   return sys_chdir(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);
