@@ -33,7 +33,7 @@ Languages of choice:
 - [x] 8A, 8B: Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
 - [x] Add another kernel syscall "SYS_READDIR" to support a shell command to be added later "l" which is similar to "ls"
 - [x] Add a kernel syscall that can fetch the pid of a process by name, in order to later support a shell command "pidof"
-- [ ] Add more kernel syscalls SYS_KILL and SYS_PROCLIST or similar (to support the "end" command, which is similar to "kill")
+- [x] Add more kernel syscalls SYS_KILL and SYS_PROCLIST or similar (to support the "end" command, which is similar to "kill")
 - [ ] Add support for a working directory concept (to support the command "path")
 - [ ] Add a syscall to report total/used/free space from the FAT32 volume (to support the "disk" command)
 - [ ] Implement support for file read with offset/size control

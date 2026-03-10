@@ -17,7 +17,9 @@
 #define SYS_WAITPID 6
 #define SYS_SPAWN   7
 #define SYS_READDIR 8
-#define SYS_PIDOF   9
+#define SYS_PIDOF    9
+#define SYS_KILL     10
+#define SYS_PROCLIST 11
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

@@ -77,3 +77,18 @@ long pidof(const char *name)
     int64_t ret = __syscall1(SYS_PIDOF, (uint64_t)(uintptr_t)name);
     return (long)ret;
 }
+
+int kill(long pid)
+{
+    int64_t ret = __syscall1(SYS_KILL, (uint64_t)pid);
+    if (ret < 0) { errno = ESRCH; return -1; }
+    return 0;
+}
+
+int proclist(proc_info_t *buf, int max_entries)
+{
+    int64_t ret = __syscall2(SYS_PROCLIST, (uint64_t)(uintptr_t)buf,
+                             (uint64_t)max_entries);
+    if (ret < 0) { errno = EIO; return -1; }
+    return (int)ret;
+}

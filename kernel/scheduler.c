@@ -303,6 +303,26 @@ task_t *scheduler_find_task_by_name(const char *name)
     return NULL;
 }
 
+void scheduler_remove_from_ready_queue(task_t *task)
+{
+    task_t *prev = NULL;
+    task_t *cur  = g_ready_head;
+    while (cur) {
+        if (cur == task) {
+            if (prev)
+                prev->next = cur->next;
+            else
+                g_ready_head = cur->next;
+            if (cur == g_ready_tail)
+                g_ready_tail = prev;
+            cur->next = NULL;
+            return;
+        }
+        prev = cur;
+        cur  = cur->next;
+    }
+}
+
 void scheduler_cleanup_task(task_t *task)
 {
     interrupts_disable();

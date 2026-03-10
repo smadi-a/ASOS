@@ -460,6 +460,102 @@ static int64_t sys_pidof(uint64_t name_addr)
     return -1;
 }
 
+static int64_t sys_kill(uint64_t target_pid)
+{
+    /* Cannot kill idle (PID 0). */
+    if (target_pid == 0) return -1;
+
+    task_t *cur = scheduler_get_current();
+
+    /* Cannot kill yourself — use sys_exit. */
+    if (target_pid == cur->id) return -1;
+
+    task_t *target = scheduler_find_task_by_pid(target_pid);
+    if (!target) return -1;
+    if (target->state == TASK_DEAD) return -1;
+
+    /* TODO: proper cleanup — close open fds, free user pages/PTs. */
+    target->exit_status = -1;
+    target->state = TASK_DEAD;
+
+    interrupts_disable();
+    scheduler_remove_from_ready_queue(target);
+    interrupts_enable();
+
+    serial_puts("[KILL] Task ");
+    sc_put_dec(target->id);
+    serial_puts(" (");
+    serial_puts(target->name);
+    serial_puts(") killed by task ");
+    sc_put_dec(cur->id);
+    serial_puts("\n");
+
+    return 0;
+}
+
+/*
+ * proc_info_t — must match user/libc/include/unistd.h layout.
+ * state values: 0=CREATED, 1=RUNNING, 2=READY, 3=BLOCKED, 4=DEAD
+ */
+typedef struct {
+    uint64_t pid;
+    uint64_t parent_pid;
+    char     name[32];
+    uint8_t  state;
+    uint8_t  padding[3];
+    uint32_t reserved;
+} sys_proc_info_t;
+
+static int64_t sys_proclist(uint64_t buf_addr, uint64_t max_entries)
+{
+    if (buf_addr >= USER_ADDR_LIMIT) return -1;
+    if (max_entries == 0 || max_entries > 256) return -1;
+
+    sys_proc_info_t *ubuf = (sys_proc_info_t *)(uintptr_t)buf_addr;
+    uint64_t count = 0;
+
+    /* Snapshot the task list with interrupts disabled. */
+    interrupts_disable();
+
+    /* Walk the global task list via scheduler internal iteration.
+     * We access it through the find functions, but for a full walk
+     * we need direct access.  Use scheduler_find_task_by_pid with
+     * incrementing PIDs?  No — just iterate from the scheduler. */
+
+    /* We need access to the global list head.  Rather than expose it,
+     * iterate by PID starting from 0.  This is O(n^2) but n is small. */
+
+    /* Actually, let's just iterate sensibly.  We'll call a helper. */
+    interrupts_enable();
+
+    /* Walk PIDs 0..max reasonable. The task list has monotonic IDs. */
+    for (uint64_t pid = 0; count < max_entries; pid++) {
+        task_t *t = scheduler_find_task_by_pid(pid);
+        if (!t) {
+            /* No task with this PID.  If we've gone past a reasonable
+             * gap, stop scanning. */
+            if (pid > 1000) break;
+            continue;
+        }
+        if (t->state == TASK_DEAD) continue;
+
+        ubuf[count].pid = t->id;
+        ubuf[count].parent_pid = t->parent_pid;
+        int i;
+        for (i = 0; i < 31 && t->name[i]; i++)
+            ubuf[count].name[i] = t->name[i];
+        ubuf[count].name[i] = '\0';
+        ubuf[count].state = (uint8_t)t->state;
+        ubuf[count].padding[0] = 0;
+        ubuf[count].padding[1] = 0;
+        ubuf[count].padding[2] = 0;
+        ubuf[count].reserved = 0;
+        count++;
+    }
+
+    return (int64_t)count;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -479,6 +575,8 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_SPAWN:   return sys_spawn(arg1, arg2);
     case SYS_READDIR: return sys_readdir(arg1, arg2, arg3);
     case SYS_PIDOF:   return sys_pidof(arg1);
+    case SYS_KILL:    return sys_kill(arg1);
+    case SYS_PROCLIST:return sys_proclist(arg1, arg2);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);
