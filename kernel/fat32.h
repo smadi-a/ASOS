@@ -68,4 +68,21 @@ int fat32_find(const char *name11, fat32_file_t *out);
 int fat32_read(const fat32_file_t *f, uint32_t offset,
                void *buf, uint32_t len, uint32_t *got);
 
+/* Filesystem usage statistics. */
+typedef struct {
+    uint64_t total_bytes;
+    uint64_t free_bytes;
+    uint64_t used_bytes;
+    uint32_t cluster_size;
+    uint32_t total_clusters;
+    uint32_t free_clusters;
+    uint32_t used_clusters;
+} fs_stat_t;
+
+/*
+ * Retrieve filesystem statistics (total/free/used space).
+ * Returns 0 on success, -1 on error.
+ */
+int fat32_get_stats(fs_stat_t *stat);
+
 #endif /* FAT32_H */

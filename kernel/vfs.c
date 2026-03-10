@@ -88,6 +88,11 @@ int vfs_list_dir(const char *path, vfs_dirent_t *entries,
     return -1;
 }
 
+int vfs_get_stats(fs_stat_t *stat)
+{
+    return fat32_get_stats(stat);
+}
+
 /* ── Path resolution ─────────────────────────────────────────────────────*/
 
 int vfs_resolve_path(const char *input, const char *cwd,

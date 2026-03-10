@@ -92,6 +92,16 @@ static uint32_t g_fat_lba;        /* LBA of first FAT (rel. to partition) */
 static uint32_t g_data_lba;       /* LBA of data region  (rel. to part.)  */
 static uint32_t g_root_cluster;   /* First cluster of the root directory  */
 
+/* BPB values cached for fat32_get_stats. */
+static uint32_t g_total_sectors;  /* total_sectors_32 from BPB            */
+static uint16_t g_reserved_secs;  /* reserved_sectors from BPB            */
+static uint8_t  g_num_fats;       /* num_fats from BPB (usually 2)        */
+static uint32_t g_fat_size;       /* fat_size_32 from BPB (sectors/FAT)   */
+
+/* Cached free cluster count (read-only FS → computed once). */
+static uint32_t g_cached_free_clusters;
+static int      g_free_clusters_valid;
+
 /* Re-used 512-byte I/O buffer. */
 static uint8_t g_sec[512];
 
@@ -287,6 +297,12 @@ int fat32_init(uint8_t ata_drive, uint32_t partition_start_lba)
                      + (uint32_t)bpb->num_fats * bpb->fat_size_32;
     g_root_cluster = bpb->root_cluster;
 
+    g_total_sectors = bpb->total_sectors_32;
+    g_reserved_secs = bpb->reserved_sectors;
+    g_num_fats      = bpb->num_fats;
+    g_fat_size      = bpb->fat_size_32;
+    g_free_clusters_valid = 0;
+
     serial_puts("[FAT32] Mounted: spc=");
     /* Print g_spc as decimal via serial */
     {
@@ -391,5 +407,51 @@ int fat32_read(const fat32_file_t *f, uint32_t offset,
     }
 
     *got = done;
+    return 0;
+}
+
+int fat32_get_stats(fs_stat_t *stat)
+{
+    uint32_t data_sectors = g_total_sectors
+                            - (uint32_t)g_reserved_secs
+                            - (uint32_t)g_num_fats * g_fat_size;
+    uint32_t total_data_clusters = data_sectors / (uint32_t)g_spc;
+
+    uint32_t free_count;
+    if (g_free_clusters_valid) {
+        free_count = g_cached_free_clusters;
+    } else {
+        /* Scan the FAT to count free clusters. */
+        free_count = 0;
+        uint32_t entries_per_sector = 512U / 4U;  /* 128 */
+
+        for (uint32_t s = 0; s < g_fat_size; s++) {
+            if (read_sec(g_fat_lba + s) != 0) return -1;
+
+            uint32_t *entries = (uint32_t *)g_sec;
+            for (uint32_t i = 0; i < entries_per_sector; i++) {
+                uint32_t ci = s * entries_per_sector + i;
+                if (ci < 2) continue;                       /* reserved */
+                if (ci >= total_data_clusters + 2) goto done;
+                if ((entries[i] & 0x0FFFFFFFU) == 0)
+                    free_count++;
+            }
+        }
+done:
+        g_cached_free_clusters = free_count;
+        g_free_clusters_valid = 1;
+    }
+
+    uint32_t cluster_size = (uint32_t)g_spc * 512U;
+    uint32_t used_count = total_data_clusters - free_count;
+
+    stat->total_bytes    = (uint64_t)total_data_clusters * cluster_size;
+    stat->free_bytes     = (uint64_t)free_count * cluster_size;
+    stat->used_bytes     = (uint64_t)used_count * cluster_size;
+    stat->cluster_size   = cluster_size;
+    stat->total_clusters = total_data_clusters;
+    stat->free_clusters  = free_count;
+    stat->used_clusters  = used_count;
+
     return 0;
 }
