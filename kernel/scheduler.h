@@ -31,6 +31,18 @@ void scheduler_tick(InterruptFrame *frame);
 /* Return the currently executing task. */
 task_t *scheduler_get_current(void);
 
+/* Find a dead child of parent_pid.  If target_pid != -1, match that
+ * specific PID.  Returns NULL if no dead child found.               */
+task_t *scheduler_find_dead_child(uint64_t parent_pid, int64_t target_pid);
+
+/* Find a task by PID across all tasks (any state).  Returns NULL if
+ * no task with that PID exists.                                     */
+task_t *scheduler_find_task_by_pid(uint64_t pid);
+
+/* Remove a dead task from the global list and free its memory.
+ * Does NOT free user page tables / frames (TODO: add page walker). */
+void scheduler_cleanup_task(task_t *task);
+
 /* Interrupt control helpers. */
 static inline void interrupts_disable(void)
 {

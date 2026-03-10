@@ -152,6 +152,11 @@ void abort(void)
     _exit(127);
 }
 
+void exit(int status)
+{
+    _exit(status);
+}
+
 /* ── atoi / atol / abs ────────────────────────────────────────────────── */
 
 int atoi(const char *s)

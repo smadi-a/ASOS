@@ -15,6 +15,9 @@
 #include "gdt.h"
 #include "vmm.h"
 #include "pmm.h"
+#include "vfs.h"
+#include "heap.h"
+#include "elf.h"
 #include <stdint.h>
 
 /* ── MSR addresses ───────────────────────────────────────────────────────*/
@@ -157,6 +160,8 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t count)
 static void sys_exit(int status)
 {
     task_t *cur = scheduler_get_current();
+    cur->exit_status = status;
+
     serial_puts("[SYSCALL] Task ");
     sc_put_dec(cur->id);
     serial_puts(" (");
@@ -182,6 +187,132 @@ static void sys_yield(void)
     __asm__ volatile ("sti" ::: "memory");
     scheduler_yield();
     __asm__ volatile ("cli" ::: "memory");
+}
+
+static int64_t sys_spawn(uint64_t path_addr, uint64_t argv_addr)
+{
+    (void)argv_addr;   /* TODO: pass argv to child */
+
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+
+    /* Copy path from user space to a kernel buffer.
+     * We must do this while still in the user's address space. */
+    char path[256];
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    int i;
+    for (i = 0; i < 255; i++) {
+        path[i] = user_path[i];
+        if (path[i] == '\0') break;
+    }
+    path[255] = '\0';
+
+    /* Switch to kernel address space for VFS/PMM/VMM operations. */
+    task_t *cur = scheduler_get_current();
+    uint64_t kernel_pml4 = vmm_get_kernel_pml4();
+    vmm_switch_address_space(kernel_pml4);
+
+    /* Open the file. */
+    vfs_file_t file;
+    if (vfs_open(path, &file) != 0) {
+        serial_puts("[SPAWN] File not found: ");
+        serial_puts(path);
+        serial_puts("\n");
+        vmm_switch_address_space(cur->pml4_phys);
+        return -1;
+    }
+
+    /* Read the file into a kernel buffer. */
+    uint32_t fsz = vfs_size(&file);
+    void *elf_buf = kmalloc(fsz);
+    uint32_t got = 0;
+    if (vfs_read(&file, elf_buf, fsz, &got) != 0 || got == 0) {
+        serial_puts("[SPAWN] Failed to read: ");
+        serial_puts(path);
+        serial_puts("\n");
+        kfree(elf_buf);
+        vfs_close(&file);
+        vmm_switch_address_space(cur->pml4_phys);
+        return -1;
+    }
+    vfs_close(&file);
+
+    /* Extract filename for process name. */
+    const char *name = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/') name = p + 1;
+    }
+
+    /* Create process from ELF. */
+    task_t *child = task_create_from_elf(name, elf_buf, got);
+    kfree(elf_buf);
+
+    if (!child) {
+        serial_puts("[SPAWN] Failed to create process from ");
+        serial_puts(path);
+        serial_puts("\n");
+        vmm_switch_address_space(cur->pml4_phys);
+        return -1;
+    }
+
+    child->parent_pid = cur->id;
+    scheduler_add_task(child);
+
+    serial_puts("[SPAWN] Spawned ");
+    serial_puts(name);
+    serial_puts(" (pid=");
+    sc_put_dec(child->id);
+    serial_puts(", parent=");
+    sc_put_dec(cur->id);
+    serial_puts(")\n");
+
+    /* Switch back to user address space. */
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return (int64_t)child->id;
+}
+
+static int64_t sys_waitpid(uint64_t pid, uint64_t status_addr)
+{
+    if (status_addr != 0 && status_addr >= USER_ADDR_LIMIT)
+        return -1;
+
+    task_t *cur = scheduler_get_current();
+
+    for (;;) {
+        interrupts_disable();
+        task_t *child = scheduler_find_dead_child(cur->id, (int64_t)pid);
+
+        if (child) {
+            int64_t child_pid = (int64_t)child->id;
+            int child_status = child->exit_status;
+            scheduler_cleanup_task(child);
+            interrupts_enable();
+
+            /* Store exit status in user space. */
+            if (status_addr != 0) {
+                int *user_status = (int *)(uintptr_t)status_addr;
+                *user_status = child_status;
+            }
+
+            return child_pid;
+        }
+
+        /* Check if the requested child exists at all. */
+        if ((int64_t)pid != -1) {
+            task_t *target = scheduler_find_task_by_pid(pid);
+            if (!target || target->parent_pid != cur->id) {
+                interrupts_enable();
+                return -1;  /* Not our child or doesn't exist */
+            }
+        }
+
+        interrupts_enable();
+
+        /* No dead child yet — yield and try again. */
+        __asm__ volatile ("sti" ::: "memory");
+        scheduler_yield();
+        __asm__ volatile ("cli" ::: "memory");
+    }
 }
 
 static int64_t sys_sbrk(int64_t increment)
@@ -238,8 +369,8 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_GETPID:  return sys_getpid();
     case SYS_YIELD:   sys_yield(); return 0;
     case SYS_SBRK:    return sys_sbrk((int64_t)arg1);
-    case SYS_WAITPID: return -1;   /* stub */
-    case SYS_SPAWN:   return -1;   /* stub */
+    case SYS_WAITPID: return sys_waitpid(arg1, arg2);
+    case SYS_SPAWN:   return sys_spawn(arg1, arg2);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

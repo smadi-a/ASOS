@@ -209,7 +209,8 @@ KERNEL_ELF := $(BUILD)/kernel.elf
 # ── User programs ──────────────────────────────────────────────────────
 
 USER_DIR  := user
-USER_ELF  := $(USER_DIR)/hello.elf
+USER_ELFS := $(USER_DIR)/hello.elf $(USER_DIR)/shell.elf \
+             $(USER_DIR)/echo.elf $(USER_DIR)/cat.elf
 
 .PHONY: all run clean deps check-tools vdi user-programs
 
@@ -344,7 +345,10 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) user-programs | $(BUILD)
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(BUILD)/TEST.TXT  ::TEST.TXT
 
 	# 8. Copy user programs.
-	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_ELF) ::HELLO.ELF
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/hello.elf ::HELLO.ELF
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/shell.elf ::SHELL.ELF
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/echo.elf  ::ECHO.ELF
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/cat.elf   ::CAT.ELF
 
 	@echo "Disk image ready: $(DISK_IMG)"
 

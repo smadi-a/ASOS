@@ -47,3 +47,18 @@ void *sbrk(intptr_t increment)
     }
     return (void *)(uintptr_t)ret;
 }
+
+long spawn(const char *path)
+{
+    int64_t ret = __syscall2(SYS_SPAWN, (uint64_t)(uintptr_t)path, 0);
+    if (ret < 0) { errno = ENOENT; return -1; }
+    return (long)ret;
+}
+
+long waitpid(long pid, int *status)
+{
+    int64_t ret = __syscall2(SYS_WAITPID, (uint64_t)pid,
+                             (uint64_t)(uintptr_t)status);
+    if (ret < 0) { errno = ESRCH; return -1; }
+    return (long)ret;
+}

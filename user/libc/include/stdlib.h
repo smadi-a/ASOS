@@ -13,6 +13,7 @@ void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);
 
 void  abort(void) __attribute__((noreturn));
+void  exit(int status) __attribute__((noreturn));
 int   atoi(const char *s);
 long  atol(const char *s);
 int   abs(int n);

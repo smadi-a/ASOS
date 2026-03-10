@@ -228,82 +228,64 @@ static void kernel_main2(void)
     /* ── Ring-3 user processes ───────────────────────────────────────── */
     scheduler_init();
 
-    /* Load ELF program from disk. */
-    serial_puts("[INIT] Loading HELLO.ELF from disk...\n");
+    /* Load shell from disk. */
+    serial_puts("[INIT] Loading shell...\n");
     {
         vfs_file_t elf_file;
-        if (vfs_open("/HELLO.ELF", &elf_file) == 0) {
+        if (vfs_open("/SHELL.ELF", &elf_file) == 0) {
             uint32_t fsz = vfs_size(&elf_file);
             void *elf_buf = kmalloc(fsz);
             uint32_t got = 0;
             if (vfs_read(&elf_file, elf_buf, fsz, &got) == 0 && got > 0) {
                 serial_puts("[INIT] Read ");
                 serial_put_dec(got);
-                serial_puts(" bytes of HELLO.ELF\n");
+                serial_puts(" bytes of SHELL.ELF\n");
 
-                task_t *elf_task = task_create_from_elf("hello.elf",
-                                                        elf_buf, got);
-                if (elf_task) {
-                    scheduler_add_task(elf_task);
-                    serial_puts("[INIT] ELF process added to scheduler\n");
+                task_t *shell_task = task_create_from_elf("shell",
+                                                          elf_buf, got);
+                if (shell_task) {
+                    shell_task->parent_pid = 0;
+                    scheduler_add_task(shell_task);
+                    serial_puts("[INIT] Shell started (pid=");
+                    serial_put_dec(shell_task->id);
+                    serial_puts(")\n");
                 } else {
-                    serial_puts("[INIT] ERROR: Failed to create process from ELF\n");
+                    serial_puts("[INIT] FATAL: Failed to create shell process\n");
                 }
             } else {
-                serial_puts("[INIT] ERROR: Failed to read HELLO.ELF\n");
+                serial_puts("[INIT] FATAL: Failed to read SHELL.ELF\n");
             }
             kfree(elf_buf);
             vfs_close(&elf_file);
         } else {
-            serial_puts("[INIT] HELLO.ELF not found, running in-kernel programs\n");
-            task_t *u1 = task_create_user("hello",   user_program_hello,   4096);
-            task_t *u2 = task_create_user("counter", user_program_counter, 4096);
-            scheduler_add_task(u1);
-            scheduler_add_task(u2);
+            serial_puts("[INIT] SHELL.ELF not found, falling back to HELLO.ELF\n");
+            vfs_file_t hello_file;
+            if (vfs_open("/HELLO.ELF", &hello_file) == 0) {
+                uint32_t fsz = vfs_size(&hello_file);
+                void *elf_buf = kmalloc(fsz);
+                uint32_t got = 0;
+                if (vfs_read(&hello_file, elf_buf, fsz, &got) == 0 && got > 0) {
+                    task_t *t = task_create_from_elf("hello.elf", elf_buf, got);
+                    if (t) scheduler_add_task(t);
+                }
+                kfree(elf_buf);
+                vfs_close(&hello_file);
+            } else {
+                serial_puts("[INIT] No user programs found, running in-kernel\n");
+                task_t *u1 = task_create_user("hello", user_program_hello, 4096);
+                task_t *u2 = task_create_user("counter", user_program_counter, 4096);
+                scheduler_add_task(u1);
+                scheduler_add_task(u2);
+            }
         }
     }
 
-    serial_puts("[OK] User processes ready\n");
-    fb_puts("[OK] User processes ready\n", COLOR_GREEN, COLOR_BLACK);
+    serial_puts("[INIT] ASOS boot complete.\n\n");
+    fb_puts(ASOS_VERSION " — booted.\n", COLOR_GREEN, COLOR_BLACK);
 
-    /* ── Banner ───────────────────────────────────────────────────────── */
-    fb_puts(ASOS_VERSION " — Keyboard active. Type something:\n",
-            COLOR_WHITE, COLOR_BLACK);
-    serial_puts(ASOS_VERSION " — Keyboard active. Type something:\n");
-
-    /* ── Main event loop ─────────────────────────────────────────────── */
-    uint64_t last_uptime_s = 0;
-
+    /* ── Idle loop — the scheduler runs everything else ───────────── */
     for (;;) {
-        /* Sleep until the next interrupt (timer or keyboard). */
         __asm__ volatile ("hlt" ::: "memory");
-
-        /* ── Uptime reporting (serial only, once per second) ── */
-        uint64_t ticks = pit_get_ticks();
-        uint64_t now_s = ticks / 1000;
-        if (now_s != last_uptime_s) {
-            last_uptime_s = now_s;
-            serial_puts("[TIMER] Uptime: ");
-            serial_put_dec(now_s);
-            serial_puts("s\n");
-        }
-
-        /* ── Drain keyboard ring buffer ── */
-        char c;
-        while (keyboard_read_char(&c)) {
-            /* Echo to serial. */
-            if (c == '\b') {
-                serial_putc('\b');
-                serial_putc(' ');
-                serial_putc('\b');
-            } else {
-                serial_putc(c);
-            }
-
-            /* Echo to framebuffer via cursor-based terminal. */
-            char str[2] = { c, '\0' };
-            fb_puts(str, COLOR_WHITE, COLOR_BLACK);
-        }
     }
 }
 
