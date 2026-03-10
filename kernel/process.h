@@ -55,4 +55,13 @@ task_t *task_create_kernel(const char *name, void (*entry_point)(void));
 task_t *task_create_user(const char *name, void (*entry_point)(void),
                          size_t code_size);
 
+/*
+ * Create a ring-3 user process from an in-memory ELF64 binary.
+ * Parses the ELF, maps PT_LOAD segments into a new address space,
+ * and sets the entry point from the ELF header.
+ * Returns NULL on failure (invalid ELF, allocation error).
+ */
+task_t *task_create_from_elf(const char *name,
+                             const void *elf_data, size_t elf_size);
+
 #endif /* PROCESS_H */

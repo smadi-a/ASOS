@@ -56,6 +56,7 @@
 #include "process.h"
 #include "syscall.h"
 #include "user_syscall.h"
+#include "elf.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
 
@@ -224,16 +225,46 @@ static void kernel_main2(void)
     syscall_init();
     serial_puts("[OK] Syscall\n");
 
-    /* ── Ring-3 user process test ────────────────────────────────────── */
+    /* ── Ring-3 user processes ───────────────────────────────────────── */
     scheduler_init();
 
-    task_t *u1 = task_create_user("hello",   user_program_hello,   4096);
-    task_t *u2 = task_create_user("counter", user_program_counter, 4096);
-    scheduler_add_task(u1);
-    scheduler_add_task(u2);
+    /* Load ELF program from disk. */
+    serial_puts("[INIT] Loading HELLO.ELF from disk...\n");
+    {
+        vfs_file_t elf_file;
+        if (vfs_open("/HELLO.ELF", &elf_file) == 0) {
+            uint32_t fsz = vfs_size(&elf_file);
+            void *elf_buf = kmalloc(fsz);
+            uint32_t got = 0;
+            if (vfs_read(&elf_file, elf_buf, fsz, &got) == 0 && got > 0) {
+                serial_puts("[INIT] Read ");
+                serial_put_dec(got);
+                serial_puts(" bytes of HELLO.ELF\n");
 
-    serial_puts("[OK] Starting ring-3 syscall test: 2 user processes\n");
-    fb_puts("[OK] Syscall test started\n", COLOR_GREEN, COLOR_BLACK);
+                task_t *elf_task = task_create_from_elf("hello.elf",
+                                                        elf_buf, got);
+                if (elf_task) {
+                    scheduler_add_task(elf_task);
+                    serial_puts("[INIT] ELF process added to scheduler\n");
+                } else {
+                    serial_puts("[INIT] ERROR: Failed to create process from ELF\n");
+                }
+            } else {
+                serial_puts("[INIT] ERROR: Failed to read HELLO.ELF\n");
+            }
+            kfree(elf_buf);
+            vfs_close(&elf_file);
+        } else {
+            serial_puts("[INIT] HELLO.ELF not found, running in-kernel programs\n");
+            task_t *u1 = task_create_user("hello",   user_program_hello,   4096);
+            task_t *u2 = task_create_user("counter", user_program_counter, 4096);
+            scheduler_add_task(u1);
+            scheduler_add_task(u2);
+        }
+    }
+
+    serial_puts("[OK] User processes ready\n");
+    fb_puts("[OK] User processes ready\n", COLOR_GREEN, COLOR_BLACK);
 
     /* ── Banner ───────────────────────────────────────────────────────── */
     fb_puts(ASOS_VERSION " — Keyboard active. Type something:\n",

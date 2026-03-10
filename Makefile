@@ -185,7 +185,8 @@ KERNEL_C_SRCS := \
     kernel/vfs.c \
     kernel/process.c \
     kernel/scheduler.c \
-    kernel/syscall.c
+    kernel/syscall.c \
+    kernel/elf.c
 
 KERNEL_ASM_SRCS := \
     kernel/gdt_flush.asm \
@@ -205,7 +206,12 @@ KERNEL_ELF := $(BUILD)/kernel.elf
 # outputs from causing silent skips on the next make invocation.
 .DELETE_ON_ERROR:
 
-.PHONY: all run clean deps check-tools vdi
+# ── User programs ──────────────────────────────────────────────────────
+
+USER_DIR  := user
+USER_ELF  := $(USER_DIR)/hello.elf
+
+.PHONY: all run clean deps check-tools vdi user-programs
 
 all: check-tools $(VDI)
 	@echo ""
@@ -301,7 +307,10 @@ $(KERNEL_ELF): $(KERNEL_OBJS) linker.ld
 # mtools' @@ syntax lets us operate on the FAT partition inside the raw
 # image without needing a loop device or root privileges.
 
-$(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) | $(BUILD)
+user-programs:
+	$(MAKE) -C $(USER_DIR)
+
+$(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) user-programs | $(BUILD)
 	@echo "Creating disk image $(DISK_IMG) ($(IMG_SIZE) MiB)..."
 
 	# 1. Allocate a blank image.
@@ -333,6 +342,9 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) | $(BUILD)
 	printf 'The quick brown fox jumps over the lazy dog.\n' > $(BUILD)/TEST.TXT
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(BUILD)/HELLO.TXT ::HELLO.TXT
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(BUILD)/TEST.TXT  ::TEST.TXT
+
+	# 8. Copy user programs.
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_ELF) ::HELLO.ELF
 
 	@echo "Disk image ready: $(DISK_IMG)"
 
@@ -399,4 +411,5 @@ $(DEPS_STAMP):
 
 clean:
 	rm -rf $(BUILD)
+	$(MAKE) -C $(USER_DIR) clean
 	@echo "Note: deps/ sysroot preserved. Run 'rm -rf deps' to remove it too."
