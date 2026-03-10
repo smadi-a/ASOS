@@ -18,6 +18,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "gdt.h"
+#include "elf.h"
 
 /* context_switch.asm — push order: rbp rbx r12 r13 r14 r15, then ret. */
 extern void context_switch(uint64_t *old_rsp_ptr, uint64_t new_rsp);
@@ -267,6 +268,79 @@ task_t *task_create_user(const char *name, void (*entry_point)(void),
     proc_put_dec(t->id);
     serial_puts(", pml4=");
     proc_put_hex(t->pml4_phys);
+    serial_puts(")\n");
+
+    return t;
+}
+
+/* ── ELF-based user process creation ────────────────────────────────────*/
+
+task_t *task_create_from_elf(const char *name,
+                             const void *elf_data, size_t elf_size)
+{
+    task_t *t = (task_t *)kmalloc(sizeof(task_t));
+    memset(t, 0, sizeof(*t));
+
+    t->id    = g_next_id++;
+    t->state = TASK_CREATED;
+
+    /* Copy name. */
+    size_t len = 0;
+    while (name[len] && len < sizeof(t->name) - 1) len++;
+    memcpy(t->name, name, len);
+    t->name[len] = '\0';
+
+    /* Kernel stack. */
+    uint8_t *kstack = (uint8_t *)kmalloc(TASK_KSTACK_SIZE);
+    memset(kstack, 0, TASK_KSTACK_SIZE);
+    t->kernel_stack_base = (uint64_t)(uintptr_t)kstack;
+    t->kernel_stack_size = TASK_KSTACK_SIZE;
+
+    /* Create per-process address space. */
+    t->pml4_phys = vmm_create_user_address_space();
+
+    /* Load the ELF into the new address space. */
+    uint64_t entry = elf_load(elf_data, elf_size, t->pml4_phys);
+    if (entry == 0) {
+        serial_puts("[PROC] ELF load failed for ");
+        serial_puts(name);
+        serial_puts("\n");
+        kfree(kstack);
+        kfree(t);
+        return NULL;
+    }
+    t->user_entry_virt = entry;
+
+    /* Map user stack pages (read+write, no-execute). */
+    for (int i = 0; i < USER_STACK_PAGES; i++) {
+        uint64_t frame = pmm_alloc_frame();
+        vmm_map_user_page(t->pml4_phys,
+                          USER_STACK_VIRT + (uint64_t)i * PMM_PAGE_SIZE,
+                          frame,
+                          PTE_USER | PTE_WRITABLE | PTE_NO_EXEC);
+    }
+    t->user_stack_top_virt = USER_STACK_VIRT
+                           + (uint64_t)USER_STACK_PAGES * PMM_PAGE_SIZE;
+
+    /* Build initial kernel stack frame — same as task_create_user. */
+    uint64_t *sp = (uint64_t *)(uintptr_t)(t->kernel_stack_base
+                                            + t->kernel_stack_size);
+    *(--sp) = 0;                                            /* alignment padding */
+    *(--sp) = (uint64_t)(uintptr_t)user_process_start;     /* context_switch ret */
+    *(--sp) = 0;  /* rbp */
+    *(--sp) = 0;  /* rbx */
+    *(--sp) = 0;  /* r12 */
+    *(--sp) = 0;  /* r13 */
+    *(--sp) = 0;  /* r14 */
+    *(--sp) = 0;  /* r15 */
+    t->kernel_rsp = (uint64_t)(uintptr_t)sp;
+
+    serial_puts("[PROC] Created process from ELF: ");
+    serial_puts(t->name);
+    serial_puts(" (id=");
+    proc_put_dec(t->id);
+    serial_puts(", entry=");
+    proc_put_hex(t->user_entry_virt);
     serial_puts(")\n");
 
     return t;
