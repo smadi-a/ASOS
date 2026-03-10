@@ -37,6 +37,10 @@ typedef struct task {
     uint64_t       user_stack_top_virt;/* Top of user stack VA             */
     int            has_been_preempted; /* Set once user task is preempted   */
 
+    uint64_t       heap_start;         /* First usable heap VA             */
+    uint64_t       heap_break;         /* Current program break            */
+    uint64_t       heap_max;           /* Maximum heap VA                  */
+
     struct task   *next;               /* Ready-queue linked list          */
 } task_t;
 

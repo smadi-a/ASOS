@@ -105,13 +105,15 @@ bool elf_validate(const void *elf_data, size_t size)
 
 /* ── Loading ────────────────────────────────────────────────────────────*/
 
-uint64_t elf_load(const void *elf_data, size_t size, uint64_t pml4_phys)
+uint64_t elf_load(const void *elf_data, size_t size, uint64_t pml4_phys,
+                  uint64_t *highest_addr_out)
 {
     if (!elf_validate(elf_data, size))
         return 0;
 
     const elf64_ehdr_t *ehdr = (const elf64_ehdr_t *)elf_data;
     const uint8_t *file = (const uint8_t *)elf_data;
+    uint64_t highest_addr = 0;
 
     for (uint16_t seg = 0; seg < ehdr->e_phnum; seg++) {
         const elf64_phdr_t *phdr = (const elf64_phdr_t *)
@@ -194,7 +196,15 @@ uint64_t elf_load(const void *elf_data, size_t size, uint64_t pml4_phys)
         serial_putc((phdr->p_flags & PF_W) ? 'W' : '-');
         serial_putc((phdr->p_flags & PF_X) ? 'X' : '-');
         serial_putc('\n');
+
+        /* Track highest mapped address. */
+        uint64_t seg_end = (phdr->p_vaddr + phdr->p_memsz + 0xFFF) & ~0xFFFULL;
+        if (seg_end > highest_addr)
+            highest_addr = seg_end;
     }
+
+    if (highest_addr_out)
+        *highest_addr_out = highest_addr;
 
     return ehdr->e_entry;
 }

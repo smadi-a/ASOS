@@ -68,8 +68,12 @@ bool elf_validate(const void *elf_data, size_t size);
  * Load an ELF64 executable into the address space rooted at pml4_phys.
  * Maps PT_LOAD segments with correct page flags.
  *
+ * If highest_addr_out is non-NULL, writes the page-aligned end address
+ * of the highest mapped segment (useful for placing the user heap).
+ *
  * Returns the entry point virtual address, or 0 on failure.
  */
-uint64_t elf_load(const void *elf_data, size_t size, uint64_t pml4_phys);
+uint64_t elf_load(const void *elf_data, size_t size, uint64_t pml4_phys,
+                  uint64_t *highest_addr_out);
 
 #endif /* ELF_H */

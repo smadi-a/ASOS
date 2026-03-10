@@ -13,6 +13,9 @@
 #define SYS_EXIT    2
 #define SYS_GETPID  3
 #define SYS_YIELD   4
+#define SYS_SBRK    5
+#define SYS_WAITPID 6
+#define SYS_SPAWN   7
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

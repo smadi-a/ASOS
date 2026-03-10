@@ -1,62 +1,44 @@
 /*
- * user/hello.c — Standalone user program loaded from an ELF binary.
+ * user/hello.c — Standalone user program demonstrating libasos.
  *
- * Demonstrates syscalls: write, getpid, yield, exit.
- * Compiled freestanding — no libc, no kernel headers.
+ * Uses printf, malloc/free, strlen, and other libc functions.
  */
 
-#include "syscall.h"
-
-static int strlen(const char *s)
-{
-    int len = 0;
-    while (s[len]) len++;
-    return len;
-}
-
-static void print(const char *s)
-{
-    write(1, s, (uint64_t)strlen(s));
-}
-
-static void print_num(int64_t n)
-{
-    if (n < 0) {
-        write(1, "-", 1);
-        n = -n;
-    }
-    char buf[20];
-    int i = 0;
-    if (n == 0) {
-        buf[i++] = '0';
-    } else {
-        while (n > 0) {
-            buf[i++] = (char)('0' + (int)(n % 10));
-            n /= 10;
-        }
-    }
-    /* Reverse and print. */
-    for (int j = i - 1; j >= 0; j--)
-        write(1, &buf[j], 1);
-}
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 int main(void)
 {
-    print("=========================\n");
-    print("Hello from an ELF binary!\n");
-    print("My PID is: ");
-    print_num(getpid());
-    print("\n");
+    printf("=========================\n");
+    printf("Hello from an ELF binary!\n");
+    printf("My PID is: %d\n", getpid());
 
-    print("Counting: ");
+    /* Test malloc + snprintf. */
+    char *buf = malloc(128);
+    if (buf) {
+        snprintf(buf, 128, "malloc returned %p\n", (void *)buf);
+        printf("%s", buf);
+
+        /* Test strlen. */
+        printf("strlen(buf) = %lu\n", (unsigned long)strlen(buf));
+
+        free(buf);
+        printf("free() succeeded\n");
+    } else {
+        printf("malloc() failed!\n");
+    }
+
+    /* Test counting with yield. */
+    printf("Counting: ");
     for (int i = 1; i <= 5; i++) {
-        print_num((int64_t)i);
-        print(" ");
+        printf("%d ", i);
         yield();
     }
-    print("\n");
+    printf("\n");
 
-    print("ELF program exiting.\n");
-    print("=========================\n");
+    printf("ELF program exiting.\n");
+    printf("=========================\n");
     return 0;
 }
