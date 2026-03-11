@@ -39,6 +39,10 @@ task_t *scheduler_find_dead_child(uint64_t parent_pid, int64_t target_pid);
  * no task with that PID exists.                                     */
 task_t *scheduler_find_task_by_pid(uint64_t pid);
 
+/* Find a living task by name (case-insensitive).  Skips TASK_DEAD
+ * and TASK_CREATED tasks.  Returns the first match, or NULL.        */
+task_t *scheduler_find_task_by_name(const char *name);
+
 /* Remove a dead task from the global list and free its memory.
  * Does NOT free user page tables / frames (TODO: add page walker). */
 void scheduler_cleanup_task(task_t *task);

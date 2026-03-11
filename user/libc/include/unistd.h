@@ -24,5 +24,6 @@ void *sbrk(intptr_t increment);
 long spawn(const char *path);
 long waitpid(long pid, int *status);
 int  readdir(const char *path, dirent_t *entries, int max_entries);
+long pidof(const char *name);
 
 #endif /* _UNISTD_H */
