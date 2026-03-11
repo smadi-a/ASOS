@@ -34,7 +34,7 @@ static void cmd_help(void)
     printf("  copy <src> <dst>     Copy a file\n");
     printf("  move <src> <dst>     Move or rename a file\n");
     printf("  delete <file>        Delete a file\n");
-    printf("  md <name>            Create a directory\n");
+    printf("  newdir <name>        Create a directory\n");
     printf("  deletedir <name>     Remove an empty directory\n");
     printf("\n");
     printf("System:\n");
@@ -123,7 +123,7 @@ static void cmd_path(const char *args)
 static void cmd_md(const char *args)
 {
     if (!args || !*args) {
-        printf("Usage: md <directory>\n");
+        printf("Usage: newdir <directory>\n");
         return;
     }
     if (mkdir(args) != 0)
@@ -484,7 +484,7 @@ static void process_command(char *cmd)
     else if (strcmp(cmd, "copy") == 0)    cmd_copy(args);
     else if (strcmp(cmd, "move") == 0)    cmd_move(args);
     else if (strcmp(cmd, "delete") == 0)  cmd_delete(args);
-    else if (strcmp(cmd, "md") == 0)      cmd_md(args);
+    else if (strcmp(cmd, "newdir") == 0)   cmd_md(args);
     else if (strcmp(cmd, "deletedir") == 0) cmd_deletedir(args);
     else if (strcmp(cmd, "pid") == 0)     cmd_pid();
     else if (strcmp(cmd, "disk") == 0)    cmd_disk(args);
