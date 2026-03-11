@@ -67,6 +67,7 @@ int vfs_open(const char *path, vfs_file_t *out)
 
     out->_fat   = fat;
     out->offset = 0;
+    memcpy(out->name_83, name11, 11);
     return 0;
 }
 
@@ -105,6 +106,59 @@ int vfs_seek(vfs_file_t *f, int64_t offset, int whence)
 
     f->offset = (uint32_t)new_off;
     return 0;
+}
+
+int vfs_create(const char *path)
+{
+    if (path[0] == '/') path++;
+
+    char name11[11];
+    if (fat32_name_to_83(path, name11) != 0) return -1;
+
+    /* Check if file already exists. */
+    fat32_file_t tmp;
+    if (fat32_find(name11, &tmp) == 0) return -1;
+
+    /* Create empty entry (first_cluster=0, size=0, ARCHIVE attr). */
+    return fat32_create_dir_entry(fat32_root_cluster(), name11,
+                                  0, 0, 0x20);
+}
+
+uint32_t vfs_write(vfs_file_t *f, const void *buf, uint32_t len)
+{
+    if (!f || !buf || len == 0) return 0;
+
+    uint32_t root = fat32_root_cluster();
+
+    /* If file has no clusters yet, allocate the first one. */
+    if (f->_fat.first_cluster == 0) {
+        uint32_t fc = fat32_alloc_cluster();
+        if (fc == 0) return 0;
+        f->_fat.first_cluster = fc;
+        fat32_update_dir_entry_first_cluster(root, f->name_83, fc);
+    }
+
+    uint32_t last = 0;
+    uint32_t written = fat32_write_at(f->_fat.first_cluster, f->offset,
+                                       buf, len, &last);
+    f->offset += written;
+
+    if (f->offset > f->_fat.size) {
+        f->_fat.size = f->offset;
+        fat32_update_dir_entry_size(root, f->name_83, f->_fat.size);
+    }
+
+    return written;
+}
+
+int vfs_delete(const char *path)
+{
+    if (path[0] == '/') path++;
+
+    char name11[11];
+    if (fat32_name_to_83(path, name11) != 0) return -1;
+
+    return fat32_delete_dir_entry(fat32_root_cluster(), name11);
 }
 
 int vfs_get_stats(fs_stat_t *stat)

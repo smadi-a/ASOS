@@ -20,6 +20,7 @@
 #include "fat32.h"
 #include "ata.h"
 #include "serial.h"
+#include "string.h"
 #include <stddef.h>
 
 /* ── Disk structures (packed — no compiler-inserted padding) ─────────────*/
@@ -98,9 +99,12 @@ static uint16_t g_reserved_secs;  /* reserved_sectors from BPB            */
 static uint8_t  g_num_fats;       /* num_fats from BPB (usually 2)        */
 static uint32_t g_fat_size;       /* fat_size_32 from BPB (sectors/FAT)   */
 
-/* Cached free cluster count (read-only FS → computed once). */
+/* Cached free cluster count. */
 static uint32_t g_cached_free_clusters;
 static int      g_free_clusters_valid;
+
+/* Next-fit cursor for cluster allocation. */
+static uint32_t g_next_free_search = 2;
 
 /* Re-used 512-byte I/O buffer. */
 static uint8_t g_sec[512];
@@ -111,6 +115,69 @@ static int read_sec(uint32_t lba)
 {
     /* All internal LBA values are relative to the partition start. */
     return ata_read_sectors(g_drive, g_part_lba + lba, 1, g_sec);
+}
+
+static int write_sec(uint32_t lba)
+{
+    return ata_write_sectors(g_drive, g_part_lba + lba, 1, g_sec);
+}
+
+/* Serial decimal printer for debug output. */
+static void fat32_put_dec(uint32_t v)
+{
+    if (v == 0) { serial_putc('0'); return; }
+    char tmp[12]; int i = 0;
+    while (v) { tmp[i++] = (char)('0' + v % 10); v /= 10; }
+    while (i--) serial_putc(tmp[i]);
+}
+
+/* ── FAT entry read/write ────────────────────────────────────────────────*/
+
+static uint32_t read_fat_entry(uint32_t cluster)
+{
+    uint32_t fat_byte   = cluster * 4U;
+    uint32_t fat_sector = g_fat_lba + fat_byte / 512U;
+    uint32_t off        = fat_byte % 512U;
+
+    if (read_sec(fat_sector) != 0) return FAT32_EOC;
+
+    uint32_t val = (uint32_t)g_sec[off]
+                 | ((uint32_t)g_sec[off + 1] <<  8)
+                 | ((uint32_t)g_sec[off + 2] << 16)
+                 | ((uint32_t)g_sec[off + 3] << 24);
+    return val & FAT32_MASK;
+}
+
+static int write_fat_entry(uint32_t cluster, uint32_t value)
+{
+    uint32_t fat_byte   = cluster * 4U;
+    uint32_t fat_sector = g_fat_lba + fat_byte / 512U;
+    uint32_t off        = fat_byte % 512U;
+
+    /* Read sector, modify entry preserving top 4 bits, write back. */
+    if (read_sec(fat_sector) != 0) return -1;
+
+    uint32_t old = (uint32_t)g_sec[off]
+                 | ((uint32_t)g_sec[off + 1] <<  8)
+                 | ((uint32_t)g_sec[off + 2] << 16)
+                 | ((uint32_t)g_sec[off + 3] << 24);
+
+    uint32_t nv = (old & 0xF0000000U) | (value & FAT32_MASK);
+    g_sec[off]     = (uint8_t)(nv);
+    g_sec[off + 1] = (uint8_t)(nv >> 8);
+    g_sec[off + 2] = (uint8_t)(nv >> 16);
+    g_sec[off + 3] = (uint8_t)(nv >> 24);
+
+    if (write_sec(fat_sector) != 0) return -1;
+
+    /* Update the second FAT copy. */
+    if (g_num_fats > 1) {
+        if (ata_write_sectors(g_drive, g_part_lba + fat_sector + g_fat_size,
+                              1, g_sec) != 0)
+            return -1;
+    }
+
+    return 0;
 }
 
 /*
@@ -454,4 +521,368 @@ done:
     stat->used_clusters  = used_count;
 
     return 0;
+}
+
+/* ── Write operations ────────────────────────────────────────────────────*/
+
+uint32_t fat32_root_cluster(void)
+{
+    return g_root_cluster;
+}
+
+static uint32_t get_total_data_clusters(void)
+{
+    uint32_t data_sectors = g_total_sectors
+                            - (uint32_t)g_reserved_secs
+                            - (uint32_t)g_num_fats * g_fat_size;
+    return data_sectors / (uint32_t)g_spc;
+}
+
+int fat32_name_to_83(const char *name, char out_83[11])
+{
+    memset(out_83, ' ', 11);
+    if (!name || !name[0]) return -1;
+
+    const char *dot = (void *)0;
+    for (const char *p = name; *p; p++)
+        if (*p == '.') dot = p;
+
+    int name_len = dot ? (int)(dot - name) : (int)strlen(name);
+    if (name_len > 8 || name_len == 0) return -1;
+
+    for (int i = 0; i < name_len; i++) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+        out_83[i] = c;
+    }
+
+    if (dot) {
+        const char *ext = dot + 1;
+        int ext_len = (int)strlen(ext);
+        if (ext_len > 3) return -1;
+        for (int i = 0; i < ext_len; i++) {
+            char c = ext[i];
+            if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+            out_83[8 + i] = c;
+        }
+    }
+
+    return 0;
+}
+
+uint32_t fat32_alloc_cluster(void)
+{
+    uint32_t total = get_total_data_clusters();
+    uint32_t cluster = g_next_free_search;
+
+    for (uint32_t searched = 0; searched < total; searched++) {
+        if (cluster >= total + 2) cluster = 2;
+
+        uint32_t entry = read_fat_entry(cluster);
+        if (entry == 0) {
+            /* Mark as end-of-chain. */
+            if (write_fat_entry(cluster, 0x0FFFFFFFU) != 0) return 0;
+
+            /* Zero the cluster's data sectors. */
+            uint32_t clba = cluster_lba(cluster);
+            memset(g_sec, 0, 512);
+            for (uint8_t s = 0; s < g_spc; s++) {
+                if (ata_write_sectors(g_drive, g_part_lba + clba + s,
+                                      1, g_sec) != 0) {
+                    write_fat_entry(cluster, 0);   /* Undo */
+                    return 0;
+                }
+            }
+
+            g_next_free_search = cluster + 1;
+            if (g_free_clusters_valid)
+                g_cached_free_clusters--;
+
+            serial_puts("[FAT32] Allocated cluster ");
+            fat32_put_dec(cluster);
+            serial_puts("\n");
+            return cluster;
+        }
+        cluster++;
+    }
+
+    serial_puts("[FAT32] ERROR: No free clusters\n");
+    return 0;
+}
+
+int fat32_free_chain(uint32_t start_cluster)
+{
+    if (start_cluster < 2) return 0;  /* Empty file */
+
+    uint32_t cluster = start_cluster;
+    while (cluster >= 2U && cluster < FAT32_EOC) {
+        uint32_t nxt = read_fat_entry(cluster);
+        if (write_fat_entry(cluster, 0) != 0) return -1;
+
+        if (g_free_clusters_valid)
+            g_cached_free_clusters++;
+
+        cluster = nxt;
+    }
+
+    if (start_cluster < g_next_free_search)
+        g_next_free_search = start_cluster;
+
+    return 0;
+}
+
+uint32_t fat32_extend_chain(uint32_t last_cluster)
+{
+    uint32_t nc = fat32_alloc_cluster();
+    if (nc == 0) return 0;
+
+    if (write_fat_entry(last_cluster, nc) != 0) {
+        write_fat_entry(nc, 0);  /* Undo alloc */
+        if (g_free_clusters_valid) g_cached_free_clusters++;
+        return 0;
+    }
+
+    return nc;
+}
+
+uint32_t fat32_write_at(uint32_t start_cluster, uint32_t byte_offset,
+                         const void *buf, uint32_t count,
+                         uint32_t *last_cluster_out)
+{
+    uint32_t cluster_bytes = (uint32_t)g_spc * 512U;
+
+    uint32_t clusters_to_skip = byte_offset / cluster_bytes;
+    uint32_t off_in_cluster   = byte_offset % cluster_bytes;
+
+    uint32_t cur = start_cluster;
+    for (uint32_t i = 0; i < clusters_to_skip; i++) {
+        uint32_t nxt = read_fat_entry(cur);
+        if (nxt >= FAT32_EOC) {
+            nxt = fat32_extend_chain(cur);
+            if (nxt == 0) { if (last_cluster_out) *last_cluster_out = cur; return 0; }
+        }
+        cur = nxt;
+    }
+
+    const uint8_t *src = (const uint8_t *)buf;
+    uint32_t written = 0;
+
+    while (written < count) {
+        uint32_t clba = cluster_lba(cur);
+
+        uint32_t avail = cluster_bytes - off_in_cluster;
+        uint32_t to_write = count - written;
+        if (to_write > avail) to_write = avail;
+
+        uint32_t start_sec  = off_in_cluster / 512U;
+        uint32_t off_in_sec = off_in_cluster % 512U;
+
+        uint32_t done_in_cl = 0;
+        for (uint32_t s = start_sec; s < g_spc && done_in_cl < to_write; s++) {
+            uint32_t src_off = (s == start_sec) ? off_in_sec : 0;
+            uint32_t writable = 512U - src_off;
+            uint32_t wlen = to_write - done_in_cl;
+            if (wlen > writable) wlen = writable;
+
+            /* Partial sector: read-modify-write. */
+            if (src_off != 0 || wlen < 512U) {
+                if (ata_read_sectors(g_drive, g_part_lba + clba + s,
+                                     1, g_sec) != 0)
+                    goto out;
+            }
+
+            memcpy(g_sec + src_off, src + written + done_in_cl, wlen);
+
+            if (ata_write_sectors(g_drive, g_part_lba + clba + s,
+                                  1, g_sec) != 0)
+                goto out;
+
+            done_in_cl += wlen;
+        }
+
+        written += done_in_cl;
+
+        if (written < count) {
+            uint32_t nxt = read_fat_entry(cur);
+            if (nxt >= FAT32_EOC) {
+                nxt = fat32_extend_chain(cur);
+                if (nxt == 0) goto out;
+            }
+            cur = nxt;
+        }
+
+        off_in_cluster = 0;
+    }
+
+out:
+    if (last_cluster_out) *last_cluster_out = cur;
+    return written;
+}
+
+/* ── Directory entry operations ──────────────────────────────────────────*/
+
+int fat32_create_dir_entry(uint32_t dir_cluster, const char name_83[11],
+                           uint32_t first_cluster, uint32_t file_size,
+                           uint8_t attributes)
+{
+    uint32_t cur = dir_cluster;
+
+    for (;;) {
+        uint32_t clba = cluster_lba(cur);
+
+        for (uint8_t s = 0; s < g_spc; s++) {
+            if (ata_read_sectors(g_drive, g_part_lba + clba + s,
+                                 1, g_sec) != 0)
+                return -1;
+
+            for (int e = 0; e < 16; e++) {
+                uint8_t *ent = g_sec + e * 32;
+
+                if (ent[0] == 0x00 || ent[0] == 0xE5) {
+                    memset(ent, 0, 32);
+                    memcpy(ent, name_83, 11);
+                    ent[11] = attributes;
+                    ent[20] = (uint8_t)(first_cluster >> 16);
+                    ent[21] = (uint8_t)(first_cluster >> 24);
+                    ent[26] = (uint8_t)(first_cluster);
+                    ent[27] = (uint8_t)(first_cluster >> 8);
+                    ent[28] = (uint8_t)(file_size);
+                    ent[29] = (uint8_t)(file_size >> 8);
+                    ent[30] = (uint8_t)(file_size >> 16);
+                    ent[31] = (uint8_t)(file_size >> 24);
+
+                    if (ata_write_sectors(g_drive, g_part_lba + clba + s,
+                                          1, g_sec) != 0)
+                        return -1;
+
+                    serial_puts("[FAT32] Created entry\n");
+                    return 0;
+                }
+            }
+        }
+
+        uint32_t nxt = read_fat_entry(cur);
+        if (nxt >= FAT32_EOC) {
+            nxt = fat32_extend_chain(cur);
+            if (nxt == 0) return -1;
+        }
+        cur = nxt;
+    }
+}
+
+int fat32_update_dir_entry_size(uint32_t dir_cluster,
+                                const char name_83[11], uint32_t new_size)
+{
+    uint32_t cur = dir_cluster;
+
+    while (cur >= 2U && cur < FAT32_EOC) {
+        uint32_t clba = cluster_lba(cur);
+
+        for (uint8_t s = 0; s < g_spc; s++) {
+            if (ata_read_sectors(g_drive, g_part_lba + clba + s,
+                                 1, g_sec) != 0)
+                return -1;
+
+            for (int e = 0; e < 16; e++) {
+                uint8_t *ent = g_sec + e * 32;
+                if (ent[0] == 0x00) return -1;
+                if (ent[0] == 0xE5) continue;
+                if (ent[11] == ATTR_LFN) continue;
+
+                if (memcmp(ent, name_83, 11) == 0) {
+                    ent[28] = (uint8_t)(new_size);
+                    ent[29] = (uint8_t)(new_size >> 8);
+                    ent[30] = (uint8_t)(new_size >> 16);
+                    ent[31] = (uint8_t)(new_size >> 24);
+                    return ata_write_sectors(g_drive,
+                                g_part_lba + clba + s, 1, g_sec);
+                }
+            }
+        }
+
+        cur = read_fat_entry(cur);
+    }
+    return -1;
+}
+
+int fat32_update_dir_entry_first_cluster(uint32_t dir_cluster,
+                                         const char name_83[11],
+                                         uint32_t first_cluster)
+{
+    uint32_t cur = dir_cluster;
+
+    while (cur >= 2U && cur < FAT32_EOC) {
+        uint32_t clba = cluster_lba(cur);
+
+        for (uint8_t s = 0; s < g_spc; s++) {
+            if (ata_read_sectors(g_drive, g_part_lba + clba + s,
+                                 1, g_sec) != 0)
+                return -1;
+
+            for (int e = 0; e < 16; e++) {
+                uint8_t *ent = g_sec + e * 32;
+                if (ent[0] == 0x00) return -1;
+                if (ent[0] == 0xE5) continue;
+                if (ent[11] == ATTR_LFN) continue;
+
+                if (memcmp(ent, name_83, 11) == 0) {
+                    ent[20] = (uint8_t)(first_cluster >> 16);
+                    ent[21] = (uint8_t)(first_cluster >> 24);
+                    ent[26] = (uint8_t)(first_cluster);
+                    ent[27] = (uint8_t)(first_cluster >> 8);
+                    return ata_write_sectors(g_drive,
+                                g_part_lba + clba + s, 1, g_sec);
+                }
+            }
+        }
+
+        cur = read_fat_entry(cur);
+    }
+    return -1;
+}
+
+int fat32_delete_dir_entry(uint32_t dir_cluster, const char name_83[11])
+{
+    uint32_t cur = dir_cluster;
+
+    while (cur >= 2U && cur < FAT32_EOC) {
+        uint32_t clba = cluster_lba(cur);
+
+        for (uint8_t s = 0; s < g_spc; s++) {
+            if (ata_read_sectors(g_drive, g_part_lba + clba + s,
+                                 1, g_sec) != 0)
+                return -1;
+
+            for (int e = 0; e < 16; e++) {
+                uint8_t *ent = g_sec + e * 32;
+                if (ent[0] == 0x00) return -1;
+                if (ent[0] == 0xE5) continue;
+                if (ent[11] == ATTR_LFN) continue;
+
+                if (memcmp(ent, name_83, 11) == 0) {
+                    /* Refuse to delete directories. */
+                    if (ent[11] & ATTR_DIRECTORY) return -1;
+
+                    uint32_t fc = ((uint32_t)ent[20] << 16)
+                                | ((uint32_t)ent[21] << 24)
+                                | ((uint32_t)ent[26])
+                                | ((uint32_t)ent[27] << 8);
+
+                    ent[0] = 0xE5;
+                    if (ata_write_sectors(g_drive,
+                                g_part_lba + clba + s, 1, g_sec) != 0)
+                        return -1;
+
+                    if (fc >= 2)
+                        fat32_free_chain(fc);
+
+                    serial_puts("[FAT32] Deleted entry\n");
+                    return 0;
+                }
+            }
+        }
+
+        cur = read_fat_entry(cur);
+    }
+    return -1;
 }

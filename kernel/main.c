@@ -251,6 +251,55 @@ static void kernel_main2(void)
         } else {
             serial_puts("[WARN] HELLO.TXT not found\n");
         }
+
+        /* ── FAT32 write test ─────────────────────────────────────── */
+        serial_puts("[TEST] FAT32 write: create WTEST.TXT...\n");
+        if (vfs_create("/WTEST.TXT") == 0) {
+            serial_puts("[TEST] Created WTEST.TXT\n");
+
+            vfs_file_t wf;
+            if (vfs_open("/WTEST.TXT", &wf) == 0) {
+                const char *msg = "Hello from ASOS!\n";
+                int mlen = 0;
+                while (msg[mlen]) mlen++;
+                uint32_t wr = vfs_write(&wf, msg, (uint32_t)mlen);
+                serial_puts("[TEST] Wrote ");
+                serial_put_dec(wr);
+                serial_puts(" bytes\n");
+                vfs_close(&wf);
+
+                /* Read back and verify. */
+                vfs_file_t rf;
+                if (vfs_open("/WTEST.TXT", &rf) == 0) {
+                    char rbuf[64];
+                    uint32_t rgot = 0;
+                    vfs_read(&rf, rbuf, sizeof(rbuf) - 1, &rgot);
+                    rbuf[rgot] = '\0';
+                    serial_puts("[TEST] Read back: '");
+                    serial_puts(rbuf);
+                    serial_puts("'\n");
+                    vfs_close(&rf);
+                }
+
+                /* Delete and verify. */
+                if (vfs_delete("/WTEST.TXT") == 0) {
+                    serial_puts("[TEST] Deleted WTEST.TXT\n");
+                    vfs_file_t df;
+                    if (vfs_open("/WTEST.TXT", &df) != 0) {
+                        serial_puts("[TEST] Verified: WTEST.TXT gone\n");
+                    } else {
+                        serial_puts("[TEST] ERROR: WTEST.TXT still exists!\n");
+                        vfs_close(&df);
+                    }
+                } else {
+                    serial_puts("[TEST] ERROR: delete failed\n");
+                }
+            } else {
+                serial_puts("[TEST] ERROR: could not open WTEST.TXT\n");
+            }
+        } else {
+            serial_puts("[TEST] ERROR: create failed\n");
+        }
     } else {
         serial_puts("[WARN] Could not mount ESP\n");
         fb_puts("[WARN] Could not mount ESP\n", COLOR_YELLOW, COLOR_BLACK);

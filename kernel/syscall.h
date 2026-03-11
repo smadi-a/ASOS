@@ -29,6 +29,9 @@
 #define SYS_FSIZE    18
 #define SYS_FSEEK    19
 #define SYS_FTELL    20
+#define SYS_FWRITE   21
+#define SYS_FCREATE  22
+#define SYS_FDELETE  23
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

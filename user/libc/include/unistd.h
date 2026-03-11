@@ -67,5 +67,8 @@ int     fclose(int fd);
 long    fsize(int fd);
 int     fseek(int fd, long offset, int whence);
 long    ftell(int fd);
+long    fwrite_file(int fd, const void *buf, size_t count);
+int     fcreate(const char *path);
+int     fdelete(const char *path);
 
 #endif /* _UNISTD_H */

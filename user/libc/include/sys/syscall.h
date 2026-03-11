@@ -28,6 +28,9 @@
 #define SYS_FSIZE    18
 #define SYS_FSEEK    19
 #define SYS_FTELL    20
+#define SYS_FWRITE   21
+#define SYS_FCREATE  22
+#define SYS_FDELETE  23
 
 static inline int64_t __syscall0(uint64_t num)
 {

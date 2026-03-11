@@ -43,8 +43,10 @@
 #define ATA_SR_ERR  0x01U   /* Error bit set            */
 
 /* Commands. */
-#define ATA_CMD_READ_SECTORS  0x20U
-#define ATA_CMD_IDENTIFY      0xECU
+#define ATA_CMD_READ_SECTORS   0x20U
+#define ATA_CMD_WRITE_SECTORS  0x30U
+#define ATA_CMD_CACHE_FLUSH    0xE7U
+#define ATA_CMD_IDENTIFY       0xECU
 
 /* Drive-select bytes (LBA28, no LBA[27:24] bits set here). */
 #define ATA_SEL_MASTER  0xE0U
@@ -183,6 +185,42 @@ int ata_read_sectors(uint8_t drive, uint32_t lba, uint8_t count, void *buf)
         /* A brief delay between sectors lets the drive queue the next one. */
         ata_delay400();
     }
+
+    return 0;
+}
+
+int ata_write_sectors(uint8_t drive, uint32_t lba, uint8_t count,
+                      const void *buf)
+{
+    if (!g_present[drive] || count == 0) return -1;
+
+    if (ata_wait_bsy() != 0) return -1;
+
+    uint8_t sel = (drive == ATA_DRIVE_MASTER ? ATA_SEL_MASTER : ATA_SEL_SLAVE)
+                  | (uint8_t)((lba >> 24) & 0x0FU);
+    outb(ATA_DRIVE_HEAD, sel);
+    ata_delay400();
+
+    outb(ATA_SECCOUNT, count);
+    outb(ATA_LBA_LO,   (uint8_t)(lba));
+    outb(ATA_LBA_MID,  (uint8_t)(lba >>  8));
+    outb(ATA_LBA_HI,   (uint8_t)(lba >> 16));
+
+    outb(ATA_CMD, ATA_CMD_WRITE_SECTORS);
+
+    const uint16_t *ptr = (const uint16_t *)buf;
+    for (uint8_t s = 0; s < count; s++) {
+        if (ata_wait_drq() != 0) return -1;
+
+        for (int i = 0; i < 256; i++)
+            outw(ATA_DATA, ptr[s * 256 + i]);
+
+        ata_delay400();
+    }
+
+    /* Flush write cache. */
+    outb(ATA_CMD, ATA_CMD_CACHE_FLUSH);
+    if (ata_wait_bsy() != 0) return -1;
 
     return 0;
 }

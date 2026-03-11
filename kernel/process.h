@@ -53,6 +53,7 @@ typedef struct task {
         uint32_t file_size;          /* Total file size                  */
         uint32_t offset;             /* Current read position            */
         int      in_use;             /* 1 if slot is occupied            */
+        char     name_83[11];        /* FAT 8.3 name for write updates   */
     } fd_table[MAX_OPEN_FILES];
 
     struct task   *next;               /* Ready-queue linked list          */

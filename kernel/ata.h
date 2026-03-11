@@ -30,6 +30,15 @@ void ata_init(void);
  */
 int ata_read_sectors(uint8_t drive, uint32_t lba, uint8_t count, void *buf);
 
+/*
+ * Write 'count' consecutive 512-byte sectors starting at LBA 'lba' to
+ * 'drive' from 'buf'.  Flushes write cache after each sector.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int ata_write_sectors(uint8_t drive, uint32_t lba, uint8_t count,
+                      const void *buf);
+
 /* Returns true if the drive was detected during ata_init(). */
 bool ata_drive_present(uint8_t drive);
 
