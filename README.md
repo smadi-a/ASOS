@@ -38,7 +38,7 @@ Languages of choice:
 - [x] Add a syscall to report total/used/free space from the FAT32 volume (to support the upcoming shell "disk" command, which will be similar to the "df" command)
 - [x] Implement support for file read with offset/size control
 - [x] A, B: Add write support for the FAT32 file system
-- [ ] Add basic ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, kill/end, df/disk, clear/clean)
+- [x] Add basic ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, kill/end, df/disk, clear/clean)
 - [ ] PS/2 mouse Drivers
 - [ ] Graphics framebuffer library
 - [ ] Window manager and compositor
