@@ -62,3 +62,12 @@ long waitpid(long pid, int *status)
     if (ret < 0) { errno = ESRCH; return -1; }
     return (long)ret;
 }
+
+int readdir(const char *path, dirent_t *entries, int max_entries)
+{
+    int64_t ret = __syscall3(SYS_READDIR, (uint64_t)(uintptr_t)path,
+                             (uint64_t)(uintptr_t)entries,
+                             (uint64_t)max_entries);
+    if (ret < 0) { errno = EIO; return -1; }
+    return (int)ret;
+}
