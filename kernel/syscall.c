@@ -689,6 +689,7 @@ static int64_t sys_fopen(uint64_t path_addr)
             cur->fd_table[fd].file_size     = file._fat.size;
             cur->fd_table[fd].offset        = 0;
             cur->fd_table[fd].in_use        = 1;
+            memcpy(cur->fd_table[fd].name_83, file.name_83, 11);
 
             serial_puts("[FOPEN] fd=");
             sc_put_dec((uint64_t)(fd + FD_MIN));
@@ -812,6 +813,100 @@ static int64_t sys_ftell(uint64_t fd)
     return (int64_t)cur->fd_table[idx].offset;
 }
 
+static int64_t sys_fwrite(uint64_t fd, uint64_t buf_addr, uint64_t count)
+{
+    if (buf_addr >= USER_ADDR_LIMIT) return -1;
+    if (fd < FD_MIN || fd > FD_MAX) return -1;
+
+    task_t *cur = scheduler_get_current();
+    int idx = (int)(fd - FD_MIN);
+    if (!cur->fd_table[idx].in_use) return -1;
+
+    if (count == 0) return 0;
+    if (count > 65536) count = 65536;
+
+    /* Copy user data to kernel buffer, then write under kernel CR3. */
+    const uint8_t *ubuf = (const uint8_t *)(uintptr_t)buf_addr;
+    uint64_t total_written = 0;
+
+    /* Reconstruct vfs_file_t. */
+    vfs_file_t vf;
+    vf._fat.first_cluster = cur->fd_table[idx].first_cluster;
+    vf._fat.size          = cur->fd_table[idx].file_size;
+    vf.offset             = cur->fd_table[idx].offset;
+    memcpy(vf.name_83, cur->fd_table[idx].name_83, 11);
+
+    while (total_written < count) {
+        uint8_t kbuf[512];
+        uint64_t chunk = count - total_written;
+        if (chunk > sizeof(kbuf)) chunk = sizeof(kbuf);
+
+        /* Copy from user space. */
+        for (uint64_t j = 0; j < chunk; j++)
+            kbuf[j] = ubuf[total_written + j];
+
+        vmm_switch_address_space(vmm_get_kernel_pml4());
+        uint32_t got = vfs_write(&vf, kbuf, (uint32_t)chunk);
+        vmm_switch_address_space(cur->pml4_phys);
+
+        if (got == 0) break;
+        total_written += got;
+    }
+
+    /* Update fd entry from vfs_file_t. */
+    cur->fd_table[idx].first_cluster = vf._fat.first_cluster;
+    cur->fd_table[idx].file_size     = vf._fat.size;
+    cur->fd_table[idx].offset        = vf.offset;
+
+    return (int64_t)total_written;
+}
+
+static int64_t sys_fcreate(uint64_t path_addr)
+{
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    char path[256];
+    int i;
+    for (i = 0; i < 255 && user_path[i]; i++)
+        path[i] = user_path[i];
+    path[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+    char resolved[256];
+    if (vfs_resolve_path(path, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    int rc = vfs_create(resolved);
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return (int64_t)rc;
+}
+
+static int64_t sys_fdelete(uint64_t path_addr)
+{
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    char path[256];
+    int i;
+    for (i = 0; i < 255 && user_path[i]; i++)
+        path[i] = user_path[i];
+    path[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+    char resolved[256];
+    if (vfs_resolve_path(path, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    int rc = vfs_delete(resolved);
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return (int64_t)rc;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -842,6 +937,9 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_FSIZE:   return sys_fsize(arg1);
     case SYS_FSEEK:   return sys_fseek(arg1, arg2, arg3);
     case SYS_FTELL:   return sys_ftell(arg1);
+    case SYS_FWRITE:  return sys_fwrite(arg1, arg2, arg3);
+    case SYS_FCREATE: return sys_fcreate(arg1);
+    case SYS_FDELETE: return sys_fdelete(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

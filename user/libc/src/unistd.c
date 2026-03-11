@@ -158,3 +158,25 @@ long ftell(int fd)
     if (ret < 0) { errno = EINVAL; return -1; }
     return (long)ret;
 }
+
+long fwrite_file(int fd, const void *buf, size_t count)
+{
+    int64_t ret = __syscall3(SYS_FWRITE, (uint64_t)fd,
+                             (uint64_t)(uintptr_t)buf, (uint64_t)count);
+    if (ret < 0) { errno = EIO; return -1; }
+    return (long)ret;
+}
+
+int fcreate(const char *path)
+{
+    int64_t ret = __syscall1(SYS_FCREATE, (uint64_t)(uintptr_t)path);
+    if (ret < 0) { errno = EIO; return -1; }
+    return 0;
+}
+
+int fdelete(const char *path)
+{
+    int64_t ret = __syscall1(SYS_FDELETE, (uint64_t)(uintptr_t)path);
+    if (ret < 0) { errno = EIO; return -1; }
+    return 0;
+}

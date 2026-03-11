@@ -16,6 +16,7 @@
 typedef struct {
     fat32_file_t _fat;     /* Underlying FAT32 handle */
     uint32_t     offset;   /* Current read position   */
+    char         name_83[11]; /* FAT 8.3 name for dir entry updates */
 } vfs_file_t;
 
 /* A directory entry as returned by vfs_list_dir(). */
@@ -71,6 +72,25 @@ int vfs_seek(vfs_file_t *f, int64_t offset, int whence);
  */
 int vfs_list_dir(const char *path, vfs_dirent_t *entries,
                  uint32_t max, uint32_t *count);
+
+/*
+ * Create an empty file.  path must be absolute, e.g. "/HELLO.TXT".
+ * Returns 0 on success, -1 on error (file exists, bad name, disk full).
+ */
+int vfs_create(const char *path);
+
+/*
+ * Write 'len' bytes from buf at the current file offset.
+ * Extends the file and allocates clusters as needed.
+ * Returns bytes written (may be less than len on disk-full).
+ */
+uint32_t vfs_write(vfs_file_t *f, const void *buf, uint32_t len);
+
+/*
+ * Delete a file.  path must be absolute, e.g. "/HELLO.TXT".
+ * Returns 0 on success, -1 on error (not found, is a directory).
+ */
+int vfs_delete(const char *path);
 
 /*
  * Retrieve filesystem usage statistics.  Returns 0 on success, -1 on error.

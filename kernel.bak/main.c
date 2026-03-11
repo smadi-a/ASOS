@@ -1,0 +1,375 @@
+/*
+ * kernel/main.c — ASOS kernel entry point (Milestone 6C).
+ *
+ * Boot sequence
+ * ─────────────
+ *  1.  Clear BSS.
+ *  2.  serial_init()
+ *  3.  fb_init() + fb_clear()
+ *  4.  gdt_init()
+ *  5.  idt_init()
+ *  6.  pmm_init()
+ *  7.  Switch RSP to kernel BSS stack → call kernel_main2().
+ *  8.  vmm_init()
+ *  9.  heap_init()
+ * 10.  ata_init()      — detect IDE drives (master only)
+ * 11.  gpt_find_esp() — locate ESP start LBA on master drive
+ * 12.  vfs_mount()    — mount FAT32 at ESP's LBA offset
+ * 13.  FAT32 demo     — list root dir, read HELLO.TXT
+ * 14.  pic_init()      — remap IRQs, mask all lines
+ * 15.  pit_init()      — 1000 Hz timer, unmask IRQ 0
+ * 16.  keyboard_init() — PS/2 keyboard, unmask IRQ 1
+ * 17.  sti             — enable interrupts
+ * 18.  scheduler_init + ring-3 user process test
+ * 19.  Keyboard echo demo with uptime reporting
+ *
+ * IMPORTANT: kernel_main() switches RSP via inline asm.  With -O2 GCC
+ * omits the frame pointer and uses RSP-relative addressing for locals.
+ * After the RSP change, those RSP-relative offsets point into BSS
+ * instead of the real stack frame, silently corrupting globals.
+ *
+ * The fix is to split the function: kernel_main() does only the early
+ * init that needs the UEFI stack, switches RSP, and then calls
+ * kernel_main2() (marked noinline) so the compiler builds a fresh
+ * stack frame on the new stack.
+ */
+
+#include <stdint.h>
+#include <stddef.h>
+
+#include "../shared/boot_info.h"
+#include "serial.h"
+#include "framebuffer.h"
+#include "gdt.h"
+#include "idt.h"
+#include "pmm.h"
+#include "vmm.h"
+#include "heap.h"
+#include "pic.h"
+#include "pit.h"
+#include "keyboard.h"
+#include "string.h"
+#include "ata.h"
+#include "gpt.h"
+#include "vfs.h"
+#include "scheduler.h"
+#include "process.h"
+#include "syscall.h"
+#include "user_syscall.h"
+#include "elf.h"
+
+#define ASOS_VERSION "ASOS v0.1.0"
+
+extern char __bss_start[];
+extern char __bss_end[];
+
+#define KSTACK_SIZE  16384
+static uint8_t g_kstack[KSTACK_SIZE] __attribute__((aligned(16)));
+
+static void clear_bss(void)
+{
+    volatile char *p = __bss_start;
+    while (p < __bss_end) *p++ = 0;
+}
+
+/* ── Simple decimal-to-string for uptime display ──────────────────────── */
+
+static void serial_put_dec(uint64_t v)
+{
+    if (v == 0) { serial_putc('0'); return; }
+    char tmp[20];
+    int i = 0;
+    while (v) { tmp[i++] = (char)('0' + (int)(v % 10)); v /= 10; }
+    while (i--) serial_putc(tmp[i]);
+}
+
+/* ── User programs (copied to ring-3 pages, run via syscalls) ────────── */
+
+/*
+ * These functions are compiled into the kernel binary but copied to
+ * user-accessible pages and run in ring 3.  They use syscall wrappers
+ * from user_syscall.h to interact with the kernel.
+ *
+ * IMPORTANT: String literals live in kernel .rodata and are NOT
+ * accessible from ring 3.  All strings must be stack-allocated char
+ * arrays so GCC emits immediate mov instructions at -O2.
+ */
+
+/* Helper: write a decimal number to fd via syscalls.
+ * Must be always_inline — user code is copied to ring-3 pages, so
+ * any out-of-line call would jump to a wrong address. */
+__attribute__((always_inline))
+static inline void user_put_dec(int fd, uint64_t v)
+{
+    if (v == 0) {
+        char z = '0';
+        user_write(fd, &z, 1);
+        return;
+    }
+    char tmp[20];
+    int i = 0;
+    while (v) { tmp[i++] = (char)('0' + (int)(v % 10)); v /= 10; }
+    /* Reverse */
+    for (int a = 0, b = i - 1; a < b; a++, b--) {
+        char t = tmp[a]; tmp[a] = tmp[b]; tmp[b] = t;
+    }
+    user_write(fd, tmp, (uint64_t)i);
+}
+
+__attribute__((noinline))
+static void user_program_hello(void)
+{
+    /* "Hello from user space! My PID is: " — stack-allocated */
+    char msg[] = { 'H','e','l','l','o',' ','f','r','o','m',' ',
+                   'u','s','e','r',' ','s','p','a','c','e','!',' ',
+                   'M','y',' ','P','I','D',' ','i','s',':',' ','\0' };
+    char nl = '\n';
+
+    /* Write greeting. */
+    int len = 0;
+    while (msg[len]) len++;
+    user_write(1, msg, (uint64_t)len);
+
+    /* Write PID. */
+    int64_t pid = user_getpid();
+    user_put_dec(1, (uint64_t)pid);
+    user_write(1, &nl, 1);
+
+    user_exit(0);
+}
+
+__attribute__((noinline))
+static void user_program_counter(void)
+{
+    /* "User counter: " — stack-allocated */
+    char prefix[] = { 'U','s','e','r',' ','c','o','u','n','t','e','r',':',' ','\0' };
+    char nl = '\n';
+
+    int plen = 0;
+    while (prefix[plen]) plen++;
+
+    for (uint64_t i = 0; i < 5; i++) {
+        user_write(1, prefix, (uint64_t)plen);
+        user_put_dec(1, i);
+        user_write(1, &nl, 1);
+        user_yield();
+    }
+
+    user_exit(0);
+}
+
+/* ── kernel_main2 — runs entirely on the kernel BSS stack ─────────────── */
+
+__attribute__((noinline, noreturn))
+static void kernel_main2(void)
+{
+    vmm_init();
+    serial_puts("[OK] VMM\n");
+
+    heap_init();
+    serial_puts("[OK] Heap\n");
+
+    /* ── ATA + GPT + FAT32 ───────────────────────────────────────────── */
+    ata_init();
+
+    uint32_t esp_lba = gpt_find_esp(ATA_DRIVE_MASTER);
+
+    if (esp_lba != 0 && vfs_mount(ATA_DRIVE_MASTER, esp_lba) == 0) {
+        serial_puts("[OK] FAT32 mounted on ESP\n");
+        fb_puts("[OK] FAT32 mounted\n", COLOR_GREEN, COLOR_BLACK);
+
+        /* List root directory. */
+        vfs_dirent_t dir_ents[16];
+        uint32_t dir_count = 0;
+        if (vfs_list_dir("/", dir_ents, 16, &dir_count) == 0) {
+            serial_puts("[DIR] /\n");
+            for (uint32_t i = 0; i < dir_count; i++) {
+                serial_puts("  ");
+                serial_puts(dir_ents[i].is_dir ? "[DIR] " : "      ");
+                serial_puts(dir_ents[i].name);
+                serial_puts("\n");
+            }
+        }
+
+        /* Print filesystem stats. */
+        {
+            fs_stat_t fst;
+            if (fat32_get_stats(&fst) == 0) {
+                serial_puts("[FAT32] Volume: total=");
+                serial_put_dec(fst.total_bytes / 1024);
+                serial_puts(" KB, used=");
+                serial_put_dec(fst.used_bytes / 1024);
+                serial_puts(" KB, free=");
+                serial_put_dec(fst.free_bytes / 1024);
+                serial_puts(" KB, cluster_size=");
+                serial_put_dec(fst.cluster_size);
+                serial_puts("\n[FAT32] Clusters: ");
+                serial_put_dec(fst.total_clusters);
+                serial_puts(" total, ");
+                serial_put_dec(fst.used_clusters);
+                serial_puts(" used, ");
+                serial_put_dec(fst.free_clusters);
+                serial_puts(" free\n");
+            }
+        }
+
+        /* Read and print HELLO.TXT. */
+        vfs_file_t file;
+        if (vfs_open("/HELLO.TXT", &file) == 0) {
+            char buf[128];
+            uint32_t got = 0;
+            if (vfs_read(&file, buf, sizeof(buf) - 1U, &got) == 0 && got > 0) {
+                buf[got] = '\0';
+                serial_puts("[FILE] HELLO.TXT:\n");
+                serial_puts(buf);
+                fb_puts(buf, COLOR_GREEN, COLOR_BLACK);
+            }
+            /* Test offset-aware reads and seeking. */
+            vfs_seek(&file, 0, VFS_SEEK_SET);
+            char tbuf[16];
+            uint32_t tgot = 0;
+            vfs_read(&file, tbuf, 5, &tgot);
+            tbuf[tgot] = '\0';
+            serial_puts("[VFS] Read 5 from offset 0: '");
+            serial_puts(tbuf);
+            serial_puts("'\n");
+
+            vfs_read(&file, tbuf, 5, &tgot);
+            tbuf[tgot] = '\0';
+            serial_puts("[VFS] Read 5 from offset 5: '");
+            serial_puts(tbuf);
+            serial_puts("'\n");
+
+            vfs_seek(&file, 0, VFS_SEEK_SET);
+            vfs_read(&file, tbuf, 5, &tgot);
+            tbuf[tgot] = '\0';
+            serial_puts("[VFS] After seek(0): '");
+            serial_puts(tbuf);
+            serial_puts("'\n");
+
+            vfs_close(&file);
+        } else {
+            serial_puts("[WARN] HELLO.TXT not found\n");
+        }
+    } else {
+        serial_puts("[WARN] Could not mount ESP\n");
+        fb_puts("[WARN] Could not mount ESP\n", COLOR_YELLOW, COLOR_BLACK);
+    }
+
+    pic_init();
+    pit_init();
+    keyboard_init();
+
+    /* Enable hardware interrupts — must come AFTER PIC init and all
+     * handler registrations.  Before this point any IRQ would be
+     * interpreted as a CPU exception. */
+    __asm__ volatile ("sti" ::: "memory");
+    serial_puts("[OK] Interrupts enabled.\n");
+
+    /* ── Syscall mechanism ─────────────────────────────────────────── */
+    syscall_init();
+    serial_puts("[OK] Syscall\n");
+
+    /* ── Ring-3 user processes ───────────────────────────────────────── */
+    scheduler_init();
+
+    /* Load shell from disk. */
+    serial_puts("[INIT] Loading shell...\n");
+    {
+        vfs_file_t elf_file;
+        if (vfs_open("/SHELL.ELF", &elf_file) == 0) {
+            uint32_t fsz = vfs_size(&elf_file);
+            void *elf_buf = kmalloc(fsz);
+            uint32_t got = 0;
+            if (vfs_read(&elf_file, elf_buf, fsz, &got) == 0 && got > 0) {
+                serial_puts("[INIT] Read ");
+                serial_put_dec(got);
+                serial_puts(" bytes of SHELL.ELF\n");
+
+                task_t *shell_task = task_create_from_elf("shell",
+                                                          elf_buf, got);
+                if (shell_task) {
+                    shell_task->parent_pid = 0;
+                    scheduler_add_task(shell_task);
+                    serial_puts("[INIT] Shell started (pid=");
+                    serial_put_dec(shell_task->id);
+                    serial_puts(")\n");
+                } else {
+                    serial_puts("[INIT] FATAL: Failed to create shell process\n");
+                }
+            } else {
+                serial_puts("[INIT] FATAL: Failed to read SHELL.ELF\n");
+            }
+            kfree(elf_buf);
+            vfs_close(&elf_file);
+        } else {
+            serial_puts("[INIT] SHELL.ELF not found, falling back to HELLO.ELF\n");
+            vfs_file_t hello_file;
+            if (vfs_open("/HELLO.ELF", &hello_file) == 0) {
+                uint32_t fsz = vfs_size(&hello_file);
+                void *elf_buf = kmalloc(fsz);
+                uint32_t got = 0;
+                if (vfs_read(&hello_file, elf_buf, fsz, &got) == 0 && got > 0) {
+                    task_t *t = task_create_from_elf("hello.elf", elf_buf, got);
+                    if (t) scheduler_add_task(t);
+                }
+                kfree(elf_buf);
+                vfs_close(&hello_file);
+            } else {
+                serial_puts("[INIT] No user programs found, running in-kernel\n");
+                task_t *u1 = task_create_user("hello", user_program_hello, 4096);
+                task_t *u2 = task_create_user("counter", user_program_counter, 4096);
+                scheduler_add_task(u1);
+                scheduler_add_task(u2);
+            }
+        }
+    }
+
+    serial_puts("[INIT] ASOS boot complete.\n\n");
+    fb_puts(ASOS_VERSION " — booted.\n", COLOR_GREEN, COLOR_BLACK);
+
+    /* ── Idle loop — the scheduler runs everything else ───────────── */
+    for (;;) {
+        __asm__ volatile ("hlt" ::: "memory");
+    }
+}
+
+/* ── kernel_main — entry from bootloader, runs on UEFI stack ─────────── */
+
+void kernel_main(BootInfo *info)
+{
+    clear_bss();
+
+    serial_init();
+    serial_puts(ASOS_VERSION "\n");
+
+    fb_init(&info->framebuffer);
+    fb_clear(COLOR_BLACK);
+    fb_set_cursor(0, 0);
+
+    gdt_init();
+    serial_puts("[OK] GDT\n");
+
+    idt_init();
+    serial_puts("[OK] IDT\n");
+
+    pmm_init(info);
+    serial_puts("[OK] PMM\n");
+
+    /*
+     * Switch to the kernel BSS stack and call kernel_main2().
+     *
+     * This MUST be done via a function call — not by continuing in the
+     * same function — because GCC with -O2 uses RSP-relative addressing
+     * for locals (frame pointer omitted).  After the inline RSP switch
+     * the compiler's RSP-relative offsets would land in BSS instead of
+     * the actual stack frame, silently corrupting kernel globals.
+     *
+     * By calling a noinline function the compiler emits a fresh prologue
+     * that builds a correct frame on the new stack.
+     */
+    __asm__ volatile ("mov %0, %%rsp"
+        :: "r"((uint64_t)(uintptr_t)(g_kstack + KSTACK_SIZE)) : "memory");
+
+    kernel_main2();
+}
