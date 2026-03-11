@@ -20,10 +20,11 @@ static void cmd_help(void)
 {
     printf("ASOS Shell - Built-in commands:\n");
     printf("  help          Show this help message\n");
-    printf("  echo [text]   Print text\n");
+    printf("  say [text]    Print text\n");
     printf("  pid           Show shell PID\n");
     printf("  exec [file]   Run an ELF program\n");
     printf("  halt          Shut down the system\n");
+    printf("  out           Exit info\n");
     printf("\n");
     printf("Or type the name of an ELF file to run it.\n");
     printf("Example: hello\n");
@@ -112,7 +113,7 @@ static void process_command(char *cmd)
 
     if (strcmp(cmd, "help") == 0) {
         cmd_help();
-    } else if (strcmp(cmd, "echo") == 0) {
+    } else if (strcmp(cmd, "say") == 0) {
         cmd_echo(args);
     } else if (strcmp(cmd, "pid") == 0) {
         cmd_pid();
@@ -124,7 +125,7 @@ static void process_command(char *cmd)
     } else if (strcmp(cmd, "halt") == 0) {
         printf("System halting.\n");
         exit(0);
-    } else if (strcmp(cmd, "exit") == 0) {
+    } else if (strcmp(cmd, "out") == 0) {
         printf("Type 'halt' to shut down the system.\n");
     } else {
         run_program(cmd);

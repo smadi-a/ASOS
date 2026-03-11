@@ -29,8 +29,13 @@ Languages of choice:
 - [x] 6A, 6B, 6C: Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
 - [x] 7A, 7B: Syscall interface + ELF loader: syscall/sysret on x86_64, a minimal syscall table (write, read, exit, exec), ELF64 loading from your FAT32 volume
 - [x] 8A, 8B: Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
-- [ ] Rename clear, echo, ls, pid, halt to ASOS conventions
-- [ ] Custom ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, grep/find, top/proc, kill/halt, df/disk, chmod/perm, ping/test, ifconfig/ip, clear/clean)
+- [ ] Add another kernel syscall "SYS_READDIR"
+- [ ] Add more kernel syscalls SYS_KILL and SYS_PROCLIST or similar (to support the "end" command)
+- [ ] Add support for a working directory concept (to support the command "path")
+- [ ] Add a syscall to report total/used/free space from the FAT32 volume (to support the "disk" command)
+- [ ] Implement support for file read with offset/size control
+- [ ] Add write support for the FAT32 file system
+- [ ] Add basic ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, kill/end, df/disk, clear/clean)
 - [ ] PS/2 mouse Drivers
 - [ ] Graphics framebuffer library
 - [ ] Window manager and compositor
@@ -40,6 +45,7 @@ Languages of choice:
 - [ ] PCI bus enumeration
 - [ ] Network interface driver
 - [ ] TCP/IP stack
+- [ ] Add more advanced shell commands (grep/find, top/proc, chmod/perm, ping/test, ifconfig/ip)
 - [ ] DNS resolver and sockets API
 - [ ] Enhancement: Swap bitmap allocator with a buddy allocator
 - [ ] Enhancement: Write an AHCI driver that implements the same block device interface and swap it in
