@@ -14,6 +14,7 @@
 
 #include "vfs.h"
 #include "fat32.h"
+#include "string.h"
 #include <stddef.h>
 
 /* Convert a filename string to the 11-char FAT8.3 format.
@@ -85,4 +86,84 @@ int vfs_list_dir(const char *path, vfs_dirent_t *entries,
 
     *count = 0;
     return -1;
+}
+
+/* ── Path resolution ─────────────────────────────────────────────────────*/
+
+int vfs_resolve_path(const char *input, const char *cwd,
+                     char *output, size_t output_size)
+{
+    if (output_size < 2) return -1;
+
+    /* Handle empty input as "." */
+    if (!input || input[0] == '\0')
+        input = ".";
+
+    /* Build the full unresolved path in temp. */
+    char temp[512];
+    if (input[0] == '/') {
+        /* Absolute path — copy directly. */
+        strncpy(temp, input, sizeof(temp) - 1);
+        temp[sizeof(temp) - 1] = '\0';
+    } else {
+        /* Relative path — prepend cwd. */
+        size_t cwd_len = strlen(cwd);
+        size_t inp_len = strlen(input);
+        if (cwd_len + 1 + inp_len >= sizeof(temp)) return -1;
+
+        memcpy(temp, cwd, cwd_len);
+        /* Ensure separator between cwd and input. */
+        if (cwd_len > 0 && cwd[cwd_len - 1] != '/') {
+            temp[cwd_len] = '/';
+            memcpy(temp + cwd_len + 1, input, inp_len + 1);
+        } else {
+            memcpy(temp + cwd_len, input, inp_len + 1);
+        }
+    }
+
+    /* Normalize: split on '/' and process components with a stack. */
+    char *components[64];
+    int depth = 0;
+
+    /* Tokenize by '/' manually (no strtok in kernel). */
+    char *p = temp;
+    while (*p) {
+        /* Skip slashes. */
+        while (*p == '/') p++;
+        if (*p == '\0') break;
+
+        /* Find end of this component. */
+        char *start = p;
+        while (*p && *p != '/') p++;
+        /* Null-terminate this component. */
+        if (*p == '/') *p++ = '\0';
+
+        if (start[0] == '.' && start[1] == '\0') {
+            /* "." — skip */
+        } else if (start[0] == '.' && start[1] == '.' && start[2] == '\0') {
+            /* ".." — go up, but not above root */
+            if (depth > 0) depth--;
+        } else {
+            if (depth < 64)
+                components[depth++] = start;
+        }
+    }
+
+    /* Reassemble. */
+    if (depth == 0) {
+        output[0] = '/';
+        output[1] = '\0';
+    } else {
+        size_t pos = 0;
+        for (int i = 0; i < depth; i++) {
+            size_t clen = strlen(components[i]);
+            if (pos + 1 + clen >= output_size) return -1;
+            output[pos++] = '/';
+            memcpy(output + pos, components[i], clen);
+            pos += clen;
+        }
+        output[pos] = '\0';
+    }
+
+    return 0;
 }

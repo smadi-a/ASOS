@@ -39,4 +39,8 @@ typedef struct {
 int  kill(long pid);
 int  proclist(proc_info_t *buf, int max_entries);
 
+/* Working directory. */
+int  chdir(const char *path);
+int  getcwd(char *buf, size_t size);
+
 #endif /* _UNISTD_H */

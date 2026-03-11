@@ -18,6 +18,7 @@ extern int errno;
 #define EEXIST  17
 #define EINVAL  22
 #define ENOSYS  38
+#define ERANGE  34
 #define ENAMETOOLONG 36
 
 #endif /* _ERRNO_H */

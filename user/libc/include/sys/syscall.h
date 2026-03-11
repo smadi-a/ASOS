@@ -19,6 +19,8 @@
 #define SYS_PIDOF    9
 #define SYS_KILL     10
 #define SYS_PROCLIST 11
+#define SYS_GETCWD   12
+#define SYS_CHDIR    13
 
 static inline int64_t __syscall0(uint64_t num)
 {

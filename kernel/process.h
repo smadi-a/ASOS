@@ -44,6 +44,8 @@ typedef struct task {
     uint64_t       parent_pid;         /* PID of parent (0 = kernel)       */
     int            exit_status;        /* Exit code from sys_exit          */
 
+    char           cwd[256];           /* Current working directory        */
+
     struct task   *next;               /* Ready-queue linked list          */
     struct task   *all_next;           /* Global task list (forward)       */
     struct task   *all_prev;           /* Global task list (backward)      */

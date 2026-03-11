@@ -92,3 +92,18 @@ int proclist(proc_info_t *buf, int max_entries)
     if (ret < 0) { errno = EIO; return -1; }
     return (int)ret;
 }
+
+int chdir(const char *path)
+{
+    int64_t ret = __syscall1(SYS_CHDIR, (uint64_t)(uintptr_t)path);
+    if (ret < 0) { errno = ENOENT; return -1; }
+    return 0;
+}
+
+int getcwd(char *buf, size_t size)
+{
+    int64_t ret = __syscall2(SYS_GETCWD, (uint64_t)(uintptr_t)buf,
+                             (uint64_t)size);
+    if (ret < 0) { errno = ERANGE; return -1; }
+    return 0;
+}

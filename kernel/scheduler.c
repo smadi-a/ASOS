@@ -121,6 +121,8 @@ void scheduler_init(void)
     main_task->state = TASK_RUNNING;
     main_task->time_slice_remaining = TIME_SLICE_TICKS;
     memcpy(main_task->name, "main", 5);
+    main_task->cwd[0] = '/';
+    main_task->cwd[1] = '\0';
 
     g_current = main_task;
     all_list_add(main_task);
