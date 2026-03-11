@@ -688,6 +688,7 @@ static int64_t sys_fopen(uint64_t path_addr)
             cur->fd_table[fd].first_cluster = file._fat.first_cluster;
             cur->fd_table[fd].file_size     = file._fat.size;
             cur->fd_table[fd].offset        = 0;
+            cur->fd_table[fd].dir_cluster   = file.dir_cluster;
             cur->fd_table[fd].in_use        = 1;
             memcpy(cur->fd_table[fd].name_83, file.name_83, 11);
 
@@ -834,6 +835,7 @@ static int64_t sys_fwrite(uint64_t fd, uint64_t buf_addr, uint64_t count)
     vf._fat.first_cluster = cur->fd_table[idx].first_cluster;
     vf._fat.size          = cur->fd_table[idx].file_size;
     vf.offset             = cur->fd_table[idx].offset;
+    vf.dir_cluster        = cur->fd_table[idx].dir_cluster;
     memcpy(vf.name_83, cur->fd_table[idx].name_83, 11);
 
     while (total_written < count) {
@@ -907,6 +909,86 @@ static int64_t sys_fdelete(uint64_t path_addr)
     return (int64_t)rc;
 }
 
+/* ── Directory/file management syscalls ───────────────────────────────────*/
+
+static int64_t sys_mkdir(uint64_t path_addr)
+{
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+
+    char path[256];
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    int i;
+    for (i = 0; i < 255 && user_path[i]; i++) path[i] = user_path[i];
+    path[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+    char resolved[256];
+    if (vfs_resolve_path(path, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    int rc = vfs_mkdir(resolved);
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return (int64_t)rc;
+}
+
+static int64_t sys_rename(uint64_t old_path_addr, uint64_t new_path_addr)
+{
+    if (old_path_addr >= USER_ADDR_LIMIT) return -1;
+    if (new_path_addr >= USER_ADDR_LIMIT) return -1;
+
+    char old_path[256], new_path[256];
+
+    const char *u_old = (const char *)(uintptr_t)old_path_addr;
+    int i;
+    for (i = 0; i < 255 && u_old[i]; i++) old_path[i] = u_old[i];
+    old_path[i] = '\0';
+
+    const char *u_new = (const char *)(uintptr_t)new_path_addr;
+    for (i = 0; i < 255 && u_new[i]; i++) new_path[i] = u_new[i];
+    new_path[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+    char resolved_old[256], resolved_new[256];
+    vfs_resolve_path(old_path, cur->cwd, resolved_old, sizeof(resolved_old));
+    vfs_resolve_path(new_path, cur->cwd, resolved_new, sizeof(resolved_new));
+
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    int rc = vfs_rename(resolved_old, resolved_new);
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return (int64_t)rc;
+}
+
+static int64_t sys_copy(uint64_t src_path_addr, uint64_t dst_path_addr)
+{
+    if (src_path_addr >= USER_ADDR_LIMIT) return -1;
+    if (dst_path_addr >= USER_ADDR_LIMIT) return -1;
+
+    char src_path[256], dst_path[256];
+
+    const char *u_src = (const char *)(uintptr_t)src_path_addr;
+    int i;
+    for (i = 0; i < 255 && u_src[i]; i++) src_path[i] = u_src[i];
+    src_path[i] = '\0';
+
+    const char *u_dst = (const char *)(uintptr_t)dst_path_addr;
+    for (i = 0; i < 255 && u_dst[i]; i++) dst_path[i] = u_dst[i];
+    dst_path[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+    char resolved_src[256], resolved_dst[256];
+    vfs_resolve_path(src_path, cur->cwd, resolved_src, sizeof(resolved_src));
+    vfs_resolve_path(dst_path, cur->cwd, resolved_dst, sizeof(resolved_dst));
+
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    int rc = vfs_copy(resolved_src, resolved_dst);
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return (int64_t)rc;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -940,6 +1022,9 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_FWRITE:  return sys_fwrite(arg1, arg2, arg3);
     case SYS_FCREATE: return sys_fcreate(arg1);
     case SYS_FDELETE: return sys_fdelete(arg1);
+    case SYS_MKDIR:   return sys_mkdir(arg1);
+    case SYS_RENAME:  return sys_rename(arg1, arg2);
+    case SYS_COPY:    return sys_copy(arg1, arg2);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

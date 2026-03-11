@@ -1,49 +1,19 @@
 /*
- * kernel/vfs.c — Minimal VFS layer backed by FAT32.
- *
- * Path handling
- * ─────────────
- * Paths must start with "/".  The leading slash is stripped, and the
- * remaining name is converted to FAT32's 8.3 format:
- *   "HELLO.TXT"  →  "HELLO   TXT"  (8 chars name + 3 chars ext, space-padded)
- *   "README"     →  "README  "     (no extension)
- *
- * Only uppercase ASCII is accepted (FAT32 directory entries store names in
- * uppercase; callers should pass uppercase paths).
+ * kernel/vfs.c — VFS layer backed by FAT32 with subdirectory support.
  */
 
 #include "vfs.h"
 #include "fat32.h"
+#include "serial.h"
 #include "string.h"
 #include <stddef.h>
 
-/* Convert a filename string to the 11-char FAT8.3 format.
- * 'in'  : "HELLO.TXT" or "README" (no leading slash, no path separator).
- * 'out' : exactly 11 bytes, e.g. "HELLO   TXT" or "README     ".
- */
-static void to_fat83(const char *in, char out[11])
+/* Uppercase a path in-place for FAT32 compatibility. */
+static void upper_path(char *buf, size_t max)
 {
-    /* Initialise with spaces. */
-    for (int i = 0; i < 11; i++) out[i] = ' ';
-
-    int ni = 0; /* name position (0–7) */
-    int ei = 0; /* ext  position (0–2) */
-    int in_ext = 0;
-
-    for (; *in; in++) {
-        char c = *in;
-        if (c == '.') {
-            in_ext = 1;
-            continue;
-        }
-        /* Uppercase conversion. */
-        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
-
-        if (!in_ext) {
-            if (ni < 8) out[ni++] = c;
-        } else {
-            if (ei < 3) out[8 + ei++] = c;
-        }
+    for (size_t i = 0; i < max && buf[i]; i++) {
+        if (buf[i] >= 'a' && buf[i] <= 'z')
+            buf[i] = (char)(buf[i] - 32);
     }
 }
 
@@ -56,18 +26,28 @@ int vfs_mount(uint8_t ata_drive, uint32_t esp_lba)
 
 int vfs_open(const char *path, vfs_file_t *out)
 {
-    /* Strip leading slash. */
-    if (path[0] == '/') path++;
+    char upper[256];
+    strncpy(upper, path, 255);
+    upper[255] = '\0';
+    upper_path(upper, 256);
 
-    char name11[11];
-    to_fat83(path, name11);
+    uint32_t dir_cluster;
+    char name_83[11];
+    if (fat32_resolve_dir(upper, &dir_cluster, name_83) != 0)
+        return -1;
 
-    fat32_file_t fat;
-    if (fat32_find(name11, &fat) != 0) return -1;
+    fat32_entry_info_t entry;
+    if (fat32_find_entry(dir_cluster, name_83, &entry) != 0)
+        return -1;
 
-    out->_fat   = fat;
-    out->offset = 0;
-    memcpy(out->name_83, name11, 11);
+    if (entry.is_directory) return -1;  /* Can't open a directory as a file */
+
+    out->_fat.first_cluster = entry.first_cluster;
+    out->_fat.size          = entry.size;
+    out->offset             = 0;
+    memcpy(out->name_83, name_83, 11);
+    out->dir_cluster        = dir_cluster;
+
     return 0;
 }
 
@@ -81,12 +61,38 @@ int vfs_read(vfs_file_t *f, void *buf, uint32_t len, uint32_t *got)
 int vfs_list_dir(const char *path, vfs_dirent_t *entries,
                  uint32_t max, uint32_t *count)
 {
-    /* Only root directory is supported. */
-    if (path[0] == '/' && path[1] == '\0')
-        return fat32_list_root(entries, max, count);
+    uint32_t dir_cluster;
 
-    *count = 0;
-    return -1;
+    if (path[0] == '/' && path[1] == '\0') {
+        dir_cluster = fat32_root_cluster();
+    } else {
+        char upper[256];
+        strncpy(upper, path, 255);
+        upper[255] = '\0';
+        upper_path(upper, 256);
+
+        uint32_t parent_cluster;
+        char name_83[11];
+        if (fat32_resolve_dir(upper, &parent_cluster, name_83) != 0) {
+            *count = 0;
+            return -1;
+        }
+
+        fat32_entry_info_t dir_entry;
+        if (fat32_find_entry(parent_cluster, name_83, &dir_entry) != 0) {
+            *count = 0;
+            return -1;
+        }
+
+        if (!dir_entry.is_directory) {
+            *count = 0;
+            return -1;
+        }
+
+        dir_cluster = dir_entry.first_cluster;
+    }
+
+    return fat32_list_dir(dir_cluster, entries, max, count);
 }
 
 int vfs_seek(vfs_file_t *f, int64_t offset, int whence)
@@ -110,32 +116,35 @@ int vfs_seek(vfs_file_t *f, int64_t offset, int whence)
 
 int vfs_create(const char *path)
 {
-    if (path[0] == '/') path++;
+    char upper[256];
+    strncpy(upper, path, 255);
+    upper[255] = '\0';
+    upper_path(upper, 256);
 
-    char name11[11];
-    if (fat32_name_to_83(path, name11) != 0) return -1;
+    uint32_t dir_cluster;
+    char name_83[11];
+    if (fat32_resolve_dir(upper, &dir_cluster, name_83) != 0) return -1;
 
     /* Check if file already exists. */
-    fat32_file_t tmp;
-    if (fat32_find(name11, &tmp) == 0) return -1;
+    fat32_entry_info_t tmp;
+    if (fat32_find_entry(dir_cluster, name_83, &tmp) == 0) return -1;
 
     /* Create empty entry (first_cluster=0, size=0, ARCHIVE attr). */
-    return fat32_create_dir_entry(fat32_root_cluster(), name11,
-                                  0, 0, 0x20);
+    return fat32_create_dir_entry(dir_cluster, name_83, 0, 0, 0x20);
 }
 
 uint32_t vfs_write(vfs_file_t *f, const void *buf, uint32_t len)
 {
     if (!f || !buf || len == 0) return 0;
 
-    uint32_t root = fat32_root_cluster();
+    uint32_t dir = f->dir_cluster;
 
     /* If file has no clusters yet, allocate the first one. */
     if (f->_fat.first_cluster == 0) {
         uint32_t fc = fat32_alloc_cluster();
         if (fc == 0) return 0;
         f->_fat.first_cluster = fc;
-        fat32_update_dir_entry_first_cluster(root, f->name_83, fc);
+        fat32_update_dir_entry_first_cluster(dir, f->name_83, fc);
     }
 
     uint32_t last = 0;
@@ -145,7 +154,7 @@ uint32_t vfs_write(vfs_file_t *f, const void *buf, uint32_t len)
 
     if (f->offset > f->_fat.size) {
         f->_fat.size = f->offset;
-        fat32_update_dir_entry_size(root, f->name_83, f->_fat.size);
+        fat32_update_dir_entry_size(dir, f->name_83, f->_fat.size);
     }
 
     return written;
@@ -153,12 +162,90 @@ uint32_t vfs_write(vfs_file_t *f, const void *buf, uint32_t len)
 
 int vfs_delete(const char *path)
 {
-    if (path[0] == '/') path++;
+    char upper[256];
+    strncpy(upper, path, 255);
+    upper[255] = '\0';
+    upper_path(upper, 256);
 
-    char name11[11];
-    if (fat32_name_to_83(path, name11) != 0) return -1;
+    uint32_t dir_cluster;
+    char name_83[11];
+    if (fat32_resolve_dir(upper, &dir_cluster, name_83) != 0) return -1;
 
-    return fat32_delete_dir_entry(fat32_root_cluster(), name11);
+    return fat32_delete_dir_entry(dir_cluster, name_83);
+}
+
+int vfs_mkdir(const char *path)
+{
+    char upper[256];
+    strncpy(upper, path, 255);
+    upper[255] = '\0';
+    upper_path(upper, 256);
+
+    uint32_t parent_cluster;
+    char name_83[11];
+    if (fat32_resolve_dir(upper, &parent_cluster, name_83) != 0)
+        return -1;
+
+    return fat32_mkdir(parent_cluster, name_83);
+}
+
+int vfs_rename(const char *old_path, const char *new_path)
+{
+    char old_upper[256], new_upper[256];
+    strncpy(old_upper, old_path, 255);
+    old_upper[255] = '\0';
+    upper_path(old_upper, 256);
+    strncpy(new_upper, new_path, 255);
+    new_upper[255] = '\0';
+    upper_path(new_upper, 256);
+
+    uint32_t old_dir, new_dir;
+    char old_name[11], new_name[11];
+
+    if (fat32_resolve_dir(old_upper, &old_dir, old_name) != 0) return -1;
+    if (fat32_resolve_dir(new_upper, &new_dir, new_name) != 0) return -1;
+
+    if (old_dir == new_dir) {
+        return fat32_rename_entry(old_dir, old_name, new_name);
+    } else {
+        return fat32_move_entry(old_dir, old_name, new_dir, new_name);
+    }
+}
+
+int vfs_copy(const char *src_path, const char *dst_path)
+{
+    /* Open source for reading. */
+    vfs_file_t src;
+    if (vfs_open(src_path, &src) != 0) return -1;
+
+    /* Create destination file. */
+    if (vfs_create(dst_path) != 0) {
+        /* Might already exist — that's an error for copy. */
+        return -1;
+    }
+
+    vfs_file_t dst;
+    if (vfs_open(dst_path, &dst) != 0) return -1;
+
+    /* Copy in chunks. */
+    uint8_t buf[512];
+    uint32_t total_copied = 0;
+
+    while (1) {
+        uint32_t got = 0;
+        if (vfs_read(&src, buf, sizeof(buf), &got) != 0) break;
+        if (got == 0) break;
+
+        uint32_t written = vfs_write(&dst, buf, got);
+        if (written != got) {
+            serial_puts("[VFS] Copy write error\n");
+            return -1;
+        }
+        total_copied += written;
+    }
+
+    serial_puts("[VFS] Copied file\n");
+    return 0;
 }
 
 int vfs_get_stats(fs_stat_t *stat)

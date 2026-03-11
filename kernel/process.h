@@ -52,6 +52,7 @@ typedef struct task {
         uint32_t first_cluster;      /* FAT32 first cluster              */
         uint32_t file_size;          /* Total file size                  */
         uint32_t offset;             /* Current read position            */
+        uint32_t dir_cluster;        /* Parent directory cluster         */
         int      in_use;             /* 1 if slot is occupied            */
         char     name_83[11];        /* FAT 8.3 name for write updates   */
     } fd_table[MAX_OPEN_FILES];

@@ -1,8 +1,5 @@
 /*
- * kernel/vfs.h — Minimal read-only VFS layer over FAT32.
- *
- * Supports a single mounted volume; only root-directory files are accessible.
- * Paths are always of the form "/" or "/NAME.EXT".
+ * kernel/vfs.h — VFS layer over FAT32 with subdirectory support.
  */
 
 #ifndef VFS_H
@@ -17,6 +14,7 @@ typedef struct {
     fat32_file_t _fat;     /* Underlying FAT32 handle */
     uint32_t     offset;   /* Current read position   */
     char         name_83[11]; /* FAT 8.3 name for dir entry updates */
+    uint32_t     dir_cluster; /* Directory containing this file */
 } vfs_file_t;
 
 /* A directory entry as returned by vfs_list_dir(). */
@@ -91,6 +89,27 @@ uint32_t vfs_write(vfs_file_t *f, const void *buf, uint32_t len);
  * Returns 0 on success, -1 on error (not found, is a directory).
  */
 int vfs_delete(const char *path);
+
+/*
+ * Create a directory.  path must be absolute, e.g. "/MYDIR".
+ * Returns 0 on success, -1 on error.
+ */
+int vfs_mkdir(const char *path);
+
+/*
+ * Rename or move a file/directory.  Both paths must be absolute.
+ * If old and new are in the same directory, performs a rename.
+ * If in different directories, performs a move.
+ * Returns 0 on success, -1 on error.
+ */
+int vfs_rename(const char *old_path, const char *new_path);
+
+/*
+ * Copy a file.  Both paths must be absolute.
+ * Creates an independent copy with its own cluster chain.
+ * Returns 0 on success, -1 on error.
+ */
+int vfs_copy(const char *src_path, const char *dst_path);
 
 /*
  * Retrieve filesystem usage statistics.  Returns 0 on success, -1 on error.
