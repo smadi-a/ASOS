@@ -1,20 +1,6 @@
 /*
- * kernel/fat32.c — Read-only FAT32 filesystem driver.
- *
- * Design notes
- * ────────────
- *  • A single 512-byte sector buffer (g_sec) is used for all disk reads
- *    (BPB, FAT lookups, directory scans, file data).  This works because
- *    the kernel is single-threaded at this milestone.
- *
- *  • Only the root directory is searched.  Subdirectory traversal is not
- *    implemented.
- *
- *  • Long File Name (LFN) entries (attr == 0x0F) are skipped; only 8.3
- *    short entries are returned to callers.
- *
- *  • Cluster indices < 2, == 0x0FFFFFF7 (bad cluster), or ≥ 0x0FFFFFF8
- *    (end-of-chain) all terminate chain traversal.
+ * kernel/fat32.c — FAT32 filesystem driver with read/write and subdirectory
+ *                  support.
  */
 
 #include "fat32.h"
@@ -885,4 +871,323 @@ int fat32_delete_dir_entry(uint32_t dir_cluster, const char name_83[11])
         cur = read_fat_entry(cur);
     }
     return -1;
+}
+
+/* ── Subdirectory support ────────────────────────────────────────────────*/
+
+/* Callback context for fat32_find_entry. */
+typedef struct {
+    const char         *name11;
+    fat32_entry_info_t  result;
+    bool                found;
+} find_entry_ctx_t;
+
+static int cb_find_entry(const FAT32DirEnt *ent, void *ctx_v)
+{
+    find_entry_ctx_t *ctx = (find_entry_ctx_t *)ctx_v;
+
+    /* Skip volume labels. */
+    if (ent->attr & ATTR_VOLUME_ID) return 0;
+
+    /* Compare 11-char name, case-insensitive. */
+    for (int i = 0; i < 8; i++) {
+        if (ent->name[i] != to_upper((uint8_t)ctx->name11[i])) return 0;
+    }
+    for (int i = 0; i < 3; i++) {
+        if (ent->ext[i] != to_upper((uint8_t)ctx->name11[8 + i])) return 0;
+    }
+
+    ctx->result.first_cluster = ((uint32_t)ent->first_cluster_hi << 16)
+                                | (uint32_t)ent->first_cluster_lo;
+    ctx->result.size = ent->file_size;
+    ctx->result.is_directory = (ent->attr & ATTR_DIRECTORY) != 0;
+    memcpy(ctx->result.name_83, ent->name, 8);
+    memcpy(ctx->result.name_83 + 8, ent->ext, 3);
+    ctx->found = true;
+    return 1;
+}
+
+int fat32_find_entry(uint32_t dir_cluster, const char *name_83,
+                     fat32_entry_info_t *out)
+{
+    find_entry_ctx_t ctx;
+    ctx.name11 = name_83;
+    ctx.found  = false;
+
+    int rc = iterate_dir(dir_cluster, cb_find_entry, &ctx);
+    if (rc == -1) return -1;
+    if (!ctx.found) return -1;
+
+    *out = ctx.result;
+    return 0;
+}
+
+int fat32_list_dir(uint32_t dir_cluster, fat32_dirent_t *entries,
+                   uint32_t max, uint32_t *count)
+{
+    list_ctx_t ctx = { entries, max, 0 };
+    int rc = iterate_dir(dir_cluster, cb_list, &ctx);
+    *count = ctx.count;
+    return (rc == -1) ? -1 : 0;
+}
+
+int fat32_resolve_dir(const char *path, uint32_t *dir_cluster_out,
+                      char *final_name_83)
+{
+    uint32_t current_cluster = g_root_cluster;
+
+    char pathbuf[256];
+    strncpy(pathbuf, path, sizeof(pathbuf) - 1);
+    pathbuf[sizeof(pathbuf) - 1] = '\0';
+
+    /* Strip leading slashes. */
+    char *p = pathbuf;
+    while (*p == '/') p++;
+
+    if (*p == '\0') {
+        /* Path is just "/" — no final component. */
+        if (dir_cluster_out) *dir_cluster_out = g_root_cluster;
+        if (final_name_83) memset(final_name_83, ' ', 11);
+        return -1;
+    }
+
+    /* Split into components. */
+    char *components[32];
+    int num_components = 0;
+
+    char *token = p;
+    while (*p) {
+        if (*p == '/') {
+            *p = '\0';
+            if (token[0] != '\0') {
+                components[num_components++] = token;
+                if (num_components >= 32) return -1;
+            }
+            p++;
+            token = p;
+        } else {
+            p++;
+        }
+    }
+    if (token[0] != '\0') {
+        components[num_components++] = token;
+    }
+
+    if (num_components == 0) return -1;
+
+    /* Walk all components except the last one as directories. */
+    for (int i = 0; i < num_components - 1; i++) {
+        char name_83[11];
+        if (fat32_name_to_83(components[i], name_83) != 0) return -1;
+
+        fat32_entry_info_t entry;
+        if (fat32_find_entry(current_cluster, name_83, &entry) != 0)
+            return -1;
+
+        if (!entry.is_directory) return -1;
+
+        current_cluster = entry.first_cluster;
+    }
+
+    if (dir_cluster_out) *dir_cluster_out = current_cluster;
+
+    if (final_name_83) {
+        if (fat32_name_to_83(components[num_components - 1],
+                             final_name_83) != 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+int fat32_mkdir(uint32_t parent_cluster, const char *name_83)
+{
+    /* Check if entry already exists. */
+    fat32_entry_info_t existing;
+    if (fat32_find_entry(parent_cluster, name_83, &existing) == 0)
+        return -1;
+
+    /* Allocate a cluster for the new directory's contents. */
+    uint32_t dir_cluster = fat32_alloc_cluster();
+    if (dir_cluster == 0) return -1;
+
+    /* Create "." and ".." entries in the first sector. */
+    uint8_t sector_buf[512];
+    memset(sector_buf, 0, 512);
+
+    /* "." entry — points to this directory itself. */
+    uint8_t *dot = sector_buf;
+    memset(dot, ' ', 11);
+    dot[0] = '.';
+    dot[11] = ATTR_DIRECTORY;
+    dot[20] = (uint8_t)(dir_cluster >> 16);
+    dot[21] = (uint8_t)(dir_cluster >> 24);
+    dot[26] = (uint8_t)(dir_cluster);
+    dot[27] = (uint8_t)(dir_cluster >> 8);
+
+    /* ".." entry — points to parent (or 0 for root's children). */
+    uint8_t *dotdot = sector_buf + 32;
+    memset(dotdot, ' ', 11);
+    dotdot[0] = '.';
+    dotdot[1] = '.';
+    dotdot[11] = ATTR_DIRECTORY;
+    uint32_t parent_ref = (parent_cluster == g_root_cluster) ? 0 : parent_cluster;
+    dotdot[20] = (uint8_t)(parent_ref >> 16);
+    dotdot[21] = (uint8_t)(parent_ref >> 24);
+    dotdot[26] = (uint8_t)(parent_ref);
+    dotdot[27] = (uint8_t)(parent_ref >> 8);
+
+    /* Write first sector of new directory. */
+    uint32_t dir_lba = cluster_lba(dir_cluster);
+    if (ata_write_sectors(g_drive, g_part_lba + dir_lba, 1, sector_buf) != 0) {
+        fat32_free_chain(dir_cluster);
+        return -1;
+    }
+
+    /* Create directory entry in parent. */
+    if (fat32_create_dir_entry(parent_cluster, name_83, dir_cluster,
+                                0, ATTR_DIRECTORY) != 0) {
+        fat32_free_chain(dir_cluster);
+        return -1;
+    }
+
+    serial_puts("[FAT32] Created directory\n");
+    return 0;
+}
+
+int fat32_rename_entry(uint32_t dir_cluster, const char *old_name_83,
+                       const char *new_name_83)
+{
+    /* Verify new name doesn't already exist. */
+    fat32_entry_info_t existing;
+    if (fat32_find_entry(dir_cluster, new_name_83, &existing) == 0)
+        return -1;
+
+    uint32_t cur = dir_cluster;
+
+    while (cur >= 2U && cur < FAT32_EOC) {
+        uint32_t clba = cluster_lba(cur);
+
+        for (uint8_t s = 0; s < g_spc; s++) {
+            if (ata_read_sectors(g_drive, g_part_lba + clba + s,
+                                 1, g_sec) != 0)
+                return -1;
+
+            for (int e = 0; e < 16; e++) {
+                uint8_t *entry = g_sec + e * 32;
+
+                if (entry[0] == 0x00) return -1;
+                if (entry[0] == 0xE5) continue;
+                if (entry[11] == ATTR_LFN) continue;
+
+                if (memcmp(entry, old_name_83, 11) == 0) {
+                    memcpy(entry, new_name_83, 11);
+                    return ata_write_sectors(g_drive,
+                                g_part_lba + clba + s, 1, g_sec);
+                }
+            }
+        }
+
+        cur = read_fat_entry(cur);
+    }
+
+    return -1;
+}
+
+int fat32_remove_dir_entry_only(uint32_t dir_cluster, const char *name_83)
+{
+    uint32_t cur = dir_cluster;
+
+    while (cur >= 2U && cur < FAT32_EOC) {
+        uint32_t clba = cluster_lba(cur);
+
+        for (uint8_t s = 0; s < g_spc; s++) {
+            if (ata_read_sectors(g_drive, g_part_lba + clba + s,
+                                 1, g_sec) != 0)
+                return -1;
+
+            for (int e = 0; e < 16; e++) {
+                uint8_t *entry = g_sec + e * 32;
+
+                if (entry[0] == 0x00) return -1;
+                if (entry[0] == 0xE5) continue;
+                if (entry[11] == ATTR_LFN) continue;
+
+                if (memcmp(entry, name_83, 11) == 0) {
+                    entry[0] = 0xE5;
+                    return ata_write_sectors(g_drive,
+                                g_part_lba + clba + s, 1, g_sec);
+                }
+            }
+        }
+
+        cur = read_fat_entry(cur);
+    }
+
+    return -1;
+}
+
+int fat32_update_dotdot(uint32_t dir_cluster, uint32_t new_parent_cluster)
+{
+    uint32_t dir_lba = cluster_lba(dir_cluster);
+
+    if (ata_read_sectors(g_drive, g_part_lba + dir_lba, 1, g_sec) != 0)
+        return -1;
+
+    uint8_t *dotdot = g_sec + 32;
+
+    /* Verify this is actually the ".." entry. */
+    if (dotdot[0] != '.' || dotdot[1] != '.') {
+        serial_puts("[FAT32] WARNING: expected .. entry not found\n");
+        return -1;
+    }
+
+    uint32_t parent_ref = new_parent_cluster;
+    if (new_parent_cluster == g_root_cluster)
+        parent_ref = 0;
+
+    dotdot[20] = (uint8_t)(parent_ref >> 16);
+    dotdot[21] = (uint8_t)(parent_ref >> 24);
+    dotdot[26] = (uint8_t)(parent_ref);
+    dotdot[27] = (uint8_t)(parent_ref >> 8);
+
+    return ata_write_sectors(g_drive, g_part_lba + dir_lba, 1, g_sec);
+}
+
+int fat32_move_entry(uint32_t src_dir_cluster, const char *src_name_83,
+                     uint32_t dst_dir_cluster, const char *dst_name_83)
+{
+    /* Check destination doesn't already have this name. */
+    fat32_entry_info_t existing;
+    if (fat32_find_entry(dst_dir_cluster, dst_name_83, &existing) == 0)
+        return -1;
+
+    /* Read the source entry. */
+    fat32_entry_info_t src_entry;
+    if (fat32_find_entry(src_dir_cluster, src_name_83, &src_entry) != 0)
+        return -1;
+
+    /* If moving a directory, update its ".." entry. */
+    if (src_entry.is_directory) {
+        if (fat32_update_dotdot(src_entry.first_cluster,
+                                 dst_dir_cluster) != 0)
+            return -1;
+    }
+
+    /* Create entry in destination. */
+    uint8_t attr = src_entry.is_directory ? ATTR_DIRECTORY : ATTR_ARCHIVE;
+    if (fat32_create_dir_entry(dst_dir_cluster, dst_name_83,
+                                src_entry.first_cluster,
+                                src_entry.size, attr) != 0)
+        return -1;
+
+    /* Remove source entry WITHOUT freeing clusters. */
+    if (fat32_remove_dir_entry_only(src_dir_cluster, src_name_83) != 0) {
+        /* Best-effort undo. */
+        fat32_remove_dir_entry_only(dst_dir_cluster, dst_name_83);
+        return -1;
+    }
+
+    serial_puts("[FAT32] Moved entry\n");
+    return 0;
 }

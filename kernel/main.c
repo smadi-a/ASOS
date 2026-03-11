@@ -300,6 +300,114 @@ static void kernel_main2(void)
         } else {
             serial_puts("[TEST] ERROR: create failed\n");
         }
+        /* ── FAT32 write B tests ─────────────────────────────────────── */
+        serial_puts("[TEST] FAT32 write B tests...\n");
+
+        /* Test 1: Create a directory */
+        int r = vfs_mkdir("/TESTDIR");
+        serial_puts("[TEST] mkdir /TESTDIR: ");
+        serial_puts(r == 0 ? "OK\n" : "FAIL\n");
+
+        /* Test 2: Verify directory appears in root listing */
+        {
+            vfs_dirent_t td_ents[32];
+            uint32_t td_count = 0;
+            vfs_list_dir("/", td_ents, 32, &td_count);
+            for (uint32_t j = 0; j < td_count; j++) {
+                if (td_ents[j].is_dir) {
+                    serial_puts("[TEST] Found dir: ");
+                    serial_puts(td_ents[j].name);
+                    serial_puts("\n");
+                }
+            }
+        }
+
+        /* Test 3: Create a file inside the directory */
+        r = vfs_create("/TESTDIR/INNER.TXT");
+        serial_puts("[TEST] Create /TESTDIR/INNER.TXT: ");
+        serial_puts(r == 0 ? "OK\n" : "FAIL\n");
+
+        /* Test 4: Write to the inner file */
+        {
+            vfs_file_t inf;
+            if (vfs_open("/TESTDIR/INNER.TXT", &inf) == 0) {
+                const char *data = "File inside a subdirectory!";
+                int dlen = 0;
+                while (data[dlen]) dlen++;
+                vfs_write(&inf, data, (uint32_t)dlen);
+                vfs_close(&inf);
+                serial_puts("[TEST] Wrote to inner file: OK\n");
+            } else {
+                serial_puts("[TEST] Could not open inner file\n");
+            }
+        }
+
+        /* Test 5: Read it back */
+        {
+            vfs_file_t inf;
+            if (vfs_open("/TESTDIR/INNER.TXT", &inf) == 0) {
+                char rbuf[64];
+                uint32_t rgot = 0;
+                vfs_read(&inf, rbuf, 63, &rgot);
+                rbuf[rgot] = '\0';
+                serial_puts("[TEST] Read inner file: '");
+                serial_puts(rbuf);
+                serial_puts("'\n");
+                vfs_close(&inf);
+            }
+        }
+
+        /* Test 6: Copy a file */
+        r = vfs_copy("/HELLO.TXT", "/HELLO2.TXT");
+        serial_puts("[TEST] Copy HELLO.TXT -> HELLO2.TXT: ");
+        serial_puts(r == 0 ? "OK\n" : "FAIL\n");
+
+        /* Verify copy */
+        {
+            vfs_file_t cf;
+            if (vfs_open("/HELLO2.TXT", &cf) == 0) {
+                char rbuf[64];
+                uint32_t rgot = 0;
+                vfs_read(&cf, rbuf, 63, &rgot);
+                rbuf[rgot] = '\0';
+                serial_puts("[TEST] Copy contents: '");
+                serial_puts(rbuf);
+                serial_puts("'\n");
+                vfs_close(&cf);
+            }
+        }
+
+        /* Test 7: Rename */
+        r = vfs_rename("/HELLO2.TXT", "/RENAMED.TXT");
+        serial_puts("[TEST] Rename: ");
+        serial_puts(r == 0 ? "OK\n" : "FAIL\n");
+
+        /* Verify old name is gone */
+        {
+            vfs_file_t rf;
+            serial_puts("[TEST] Old name gone: ");
+            serial_puts(vfs_open("/HELLO2.TXT", &rf) != 0 ? "OK\n" : "FAIL\n");
+        }
+
+        /* Verify new name exists */
+        {
+            vfs_file_t rf;
+            serial_puts("[TEST] New name exists: ");
+            serial_puts(vfs_open("/RENAMED.TXT", &rf) == 0 ? "OK\n" : "FAIL\n");
+        }
+
+        /* Test 8: Move between directories */
+        r = vfs_rename("/RENAMED.TXT", "/TESTDIR/MOVED.TXT");
+        serial_puts("[TEST] Move to subdir: ");
+        serial_puts(r == 0 ? "OK\n" : "FAIL\n");
+
+        /* Cleanup */
+        vfs_delete("/TESTDIR/INNER.TXT");
+        vfs_delete("/TESTDIR/MOVED.TXT");
+        /* TODO: vfs_rmdir for removing empty directories */
+
+        serial_puts("[TEST] FAT32 write B tests complete.\n");
+
     } else {
         serial_puts("[WARN] Could not mount ESP\n");
         fb_puts("[WARN] Could not mount ESP\n", COLOR_YELLOW, COLOR_BLACK);

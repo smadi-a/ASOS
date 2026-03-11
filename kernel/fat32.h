@@ -1,9 +1,6 @@
 /*
- * kernel/fat32.h — Read-only FAT32 filesystem driver.
- *
- * Supports a single mounted volume (raw FAT32, no partition table).
- * Only regular files in the root directory are accessible (no subdirs).
- * Long File Name (LFN) entries are silently skipped.
+ * kernel/fat32.h — FAT32 filesystem driver with read/write and subdirectory
+ *                  support.
  */
 
 #ifndef FAT32_H
@@ -27,6 +24,14 @@ typedef struct {
     uint32_t size;        /* File size in bytes (0 for directories)  */
     bool     is_dir;
 } fat32_dirent_t;
+
+/* Internal directory entry info returned by fat32_find_entry(). */
+typedef struct {
+    uint32_t first_cluster;
+    uint32_t size;
+    bool     is_directory;
+    char     name_83[11];
+} fat32_entry_info_t;
 
 /*
  * Mount a FAT32 volume from the given ATA drive.
@@ -152,5 +157,62 @@ int fat32_update_dir_entry_first_cluster(uint32_t dir_cluster,
  * Returns 0 on success, -1 on error.
  */
 int fat32_delete_dir_entry(uint32_t dir_cluster, const char name_83[11]);
+
+/*
+ * Search directory at dir_cluster for an entry matching name_83.
+ * Finds both files and directories.
+ * Returns 0 on success, -1 if not found.
+ */
+int fat32_find_entry(uint32_t dir_cluster, const char *name_83,
+                     fat32_entry_info_t *out);
+
+/*
+ * List entries in the directory starting at dir_cluster.
+ * Fills entries[0..max-1]; sets *count to the number found.
+ * Returns 0 on success, -1 on I/O error.
+ */
+int fat32_list_dir(uint32_t dir_cluster, fat32_dirent_t *entries,
+                   uint32_t max, uint32_t *count);
+
+/*
+ * Resolve a full path: walk subdirectories to find the parent directory
+ * cluster and extract the final component in 8.3 format.
+ * Returns 0 on success, -1 on error (component not found, bad name).
+ */
+int fat32_resolve_dir(const char *path, uint32_t *dir_cluster_out,
+                      char *final_name_83);
+
+/*
+ * Create a new subdirectory with "." and ".." entries.
+ * Returns 0 on success, -1 on error.
+ */
+int fat32_mkdir(uint32_t parent_cluster, const char *name_83);
+
+/*
+ * Rename a file or directory within the same directory.
+ * Returns 0 on success, -1 on error.
+ */
+int fat32_rename_entry(uint32_t dir_cluster, const char *old_name_83,
+                       const char *new_name_83);
+
+/*
+ * Move a file or directory between directories.
+ * Returns 0 on success, -1 on error.
+ */
+int fat32_move_entry(uint32_t src_dir_cluster, const char *src_name_83,
+                     uint32_t dst_dir_cluster, const char *dst_name_83);
+
+/*
+ * Mark a directory entry as deleted (0xE5) WITHOUT freeing the cluster
+ * chain.  Used by move operations.
+ * Returns 0 on success, -1 if not found.
+ */
+int fat32_remove_dir_entry_only(uint32_t dir_cluster, const char *name_83);
+
+/*
+ * Update the ".." entry in a directory to point to new_parent_cluster.
+ * Returns 0 on success, -1 on error.
+ */
+int fat32_update_dotdot(uint32_t dir_cluster, uint32_t new_parent_cluster);
 
 #endif /* FAT32_H */

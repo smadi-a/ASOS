@@ -32,6 +32,9 @@
 #define SYS_FWRITE   21
 #define SYS_FCREATE  22
 #define SYS_FDELETE  23
+#define SYS_MKDIR    24
+#define SYS_RENAME   25
+#define SYS_COPY     26
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

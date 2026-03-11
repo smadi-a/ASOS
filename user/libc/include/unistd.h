@@ -71,4 +71,9 @@ long    fwrite_file(int fd, const void *buf, size_t count);
 int     fcreate(const char *path);
 int     fdelete(const char *path);
 
+/* Directory/file management. */
+int     mkdir(const char *path);
+int     rename(const char *oldpath, const char *newpath);
+int     copy(const char *src, const char *dst);
+
 #endif /* _UNISTD_H */
