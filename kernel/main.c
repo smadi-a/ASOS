@@ -224,6 +224,29 @@ static void kernel_main2(void)
                 serial_puts(buf);
                 fb_puts(buf, COLOR_GREEN, COLOR_BLACK);
             }
+            /* Test offset-aware reads and seeking. */
+            vfs_seek(&file, 0, VFS_SEEK_SET);
+            char tbuf[16];
+            uint32_t tgot = 0;
+            vfs_read(&file, tbuf, 5, &tgot);
+            tbuf[tgot] = '\0';
+            serial_puts("[VFS] Read 5 from offset 0: '");
+            serial_puts(tbuf);
+            serial_puts("'\n");
+
+            vfs_read(&file, tbuf, 5, &tgot);
+            tbuf[tgot] = '\0';
+            serial_puts("[VFS] Read 5 from offset 5: '");
+            serial_puts(tbuf);
+            serial_puts("'\n");
+
+            vfs_seek(&file, 0, VFS_SEEK_SET);
+            vfs_read(&file, tbuf, 5, &tgot);
+            tbuf[tgot] = '\0';
+            serial_puts("[VFS] After seek(0): '");
+            serial_puts(tbuf);
+            serial_puts("'\n");
+
             vfs_close(&file);
         } else {
             serial_puts("[WARN] HELLO.TXT not found\n");

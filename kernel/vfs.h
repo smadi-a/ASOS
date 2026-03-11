@@ -52,6 +52,17 @@ static inline uint32_t vfs_size(const vfs_file_t *f) { return f->_fat.size; }
 /* Close the file (no-op for read-only; provided for symmetry). */
 static inline void vfs_close(vfs_file_t *f) { (void)f; }
 
+/* Seek constants. */
+#define VFS_SEEK_SET  0   /* From beginning   */
+#define VFS_SEEK_CUR  1   /* From current pos  */
+#define VFS_SEEK_END  2   /* From end of file  */
+
+/*
+ * Reposition the file offset.  Returns 0 on success, -1 on error.
+ * Clamps to [0, file_size].
+ */
+int vfs_seek(vfs_file_t *f, int64_t offset, int whence);
+
 /*
  * List entries in the given directory.  path must be "/" (root only).
  * Fills entries[0..max-1] and sets *count.

@@ -88,6 +88,25 @@ int vfs_list_dir(const char *path, vfs_dirent_t *entries,
     return -1;
 }
 
+int vfs_seek(vfs_file_t *f, int64_t offset, int whence)
+{
+    if (!f) return -1;
+
+    int64_t new_off;
+    switch (whence) {
+    case VFS_SEEK_SET: new_off = offset; break;
+    case VFS_SEEK_CUR: new_off = (int64_t)f->offset + offset; break;
+    case VFS_SEEK_END: new_off = (int64_t)f->_fat.size + offset; break;
+    default: return -1;
+    }
+
+    if (new_off < 0) new_off = 0;
+    if (new_off > (int64_t)f->_fat.size) new_off = (int64_t)f->_fat.size;
+
+    f->offset = (uint32_t)new_off;
+    return 0;
+}
+
 int vfs_get_stats(fs_stat_t *stat)
 {
     return fat32_get_stats(stat);

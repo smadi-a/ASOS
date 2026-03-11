@@ -46,6 +46,15 @@ typedef struct task {
 
     char           cwd[256];           /* Current working directory        */
 
+    /* Per-process file descriptor table (fds 3..10, 0-2 reserved). */
+#define MAX_OPEN_FILES 8
+    struct {
+        uint32_t first_cluster;      /* FAT32 first cluster              */
+        uint32_t file_size;          /* Total file size                  */
+        uint32_t offset;             /* Current read position            */
+        int      in_use;             /* 1 if slot is occupied            */
+    } fd_table[MAX_OPEN_FILES];
+
     struct task   *next;               /* Ready-queue linked list          */
     struct task   *all_next;           /* Global task list (forward)       */
     struct task   *all_prev;           /* Global task list (backward)      */
