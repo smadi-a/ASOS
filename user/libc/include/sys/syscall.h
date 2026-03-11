@@ -21,6 +21,7 @@
 #define SYS_PROCLIST 11
 #define SYS_GETCWD   12
 #define SYS_CHDIR    13
+#define SYS_FSSTAT   14
 
 static inline int64_t __syscall0(uint64_t num)
 {

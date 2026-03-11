@@ -629,6 +629,25 @@ static int64_t sys_chdir(uint64_t path_addr)
     return 0;
 }
 
+static int64_t sys_fsstat(uint64_t buf_addr)
+{
+    if (buf_addr >= USER_ADDR_LIMIT) return -1;
+
+    task_t *cur = scheduler_get_current();
+    fs_stat_t kstat;
+
+    /* Switch to kernel CR3 for FAT sector reads. */
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    int rc = vfs_get_stats(&kstat);
+    vmm_switch_address_space(cur->pml4_phys);
+
+    if (rc != 0) return -1;
+
+    fs_stat_t *ubuf = (fs_stat_t *)(uintptr_t)buf_addr;
+    memcpy(ubuf, &kstat, sizeof(fs_stat_t));
+    return 0;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -652,6 +671,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_PROCLIST:return sys_proclist(arg1, arg2);
     case SYS_GETCWD:  return sys_getcwd(arg1, arg2);
     case SYS_CHDIR:   return sys_chdir(arg1);
+    case SYS_FSSTAT:  return sys_fsstat(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

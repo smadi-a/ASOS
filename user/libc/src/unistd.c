@@ -107,3 +107,10 @@ int getcwd(char *buf, size_t size)
     if (ret < 0) { errno = ERANGE; return -1; }
     return 0;
 }
+
+int fsstat(fs_stat_t *stat)
+{
+    int64_t ret = __syscall1(SYS_FSSTAT, (uint64_t)(uintptr_t)stat);
+    if (ret < 0) { errno = EIO; return -1; }
+    return 0;
+}

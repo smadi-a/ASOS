@@ -191,6 +191,28 @@ static void kernel_main2(void)
             }
         }
 
+        /* Print filesystem stats. */
+        {
+            fs_stat_t fst;
+            if (fat32_get_stats(&fst) == 0) {
+                serial_puts("[FAT32] Volume: total=");
+                serial_put_dec(fst.total_bytes / 1024);
+                serial_puts(" KB, used=");
+                serial_put_dec(fst.used_bytes / 1024);
+                serial_puts(" KB, free=");
+                serial_put_dec(fst.free_bytes / 1024);
+                serial_puts(" KB, cluster_size=");
+                serial_put_dec(fst.cluster_size);
+                serial_puts("\n[FAT32] Clusters: ");
+                serial_put_dec(fst.total_clusters);
+                serial_puts(" total, ");
+                serial_put_dec(fst.used_clusters);
+                serial_puts(" used, ");
+                serial_put_dec(fst.free_clusters);
+                serial_puts(" free\n");
+            }
+        }
+
         /* Read and print HELLO.TXT. */
         vfs_file_t file;
         if (vfs_open("/HELLO.TXT", &file) == 0) {

@@ -62,6 +62,11 @@ int vfs_list_dir(const char *path, vfs_dirent_t *entries,
                  uint32_t max, uint32_t *count);
 
 /*
+ * Retrieve filesystem usage statistics.  Returns 0 on success, -1 on error.
+ */
+int vfs_get_stats(fs_stat_t *stat);
+
+/*
  * Resolve a (possibly relative) path against the given cwd,
  * producing a normalized absolute path in output.
  * Returns 0 on success, -1 on error (buffer overflow).

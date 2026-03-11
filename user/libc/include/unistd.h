@@ -43,4 +43,17 @@ int  proclist(proc_info_t *buf, int max_entries);
 int  chdir(const char *path);
 int  getcwd(char *buf, size_t size);
 
+/* Filesystem statistics. */
+typedef struct {
+    uint64_t total_bytes;
+    uint64_t free_bytes;
+    uint64_t used_bytes;
+    uint32_t cluster_size;
+    uint32_t total_clusters;
+    uint32_t free_clusters;
+    uint32_t used_clusters;
+} fs_stat_t;
+
+int  fsstat(fs_stat_t *stat);
+
 #endif /* _UNISTD_H */
