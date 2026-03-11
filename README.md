@@ -1,6 +1,8 @@
-# ASOS
+# ASOS (in active development)
 
 ASOS is a vibe coded, hobbyist-driven, independent OS featuring a bespoke microkernel architecture designed for the hardware of today, not the constraints of the 90s.
+
+![ASOS](asos.png)
 
 Languages of choice:
 - Assembly
