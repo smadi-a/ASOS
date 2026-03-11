@@ -16,7 +16,9 @@
 #define SYS_WAITPID 6
 #define SYS_SPAWN   7
 #define SYS_READDIR 8
-#define SYS_PIDOF   9
+#define SYS_PIDOF    9
+#define SYS_KILL     10
+#define SYS_PROCLIST 11
 
 static inline int64_t __syscall0(uint64_t num)
 {

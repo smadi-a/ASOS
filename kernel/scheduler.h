@@ -43,6 +43,10 @@ task_t *scheduler_find_task_by_pid(uint64_t pid);
  * and TASK_CREATED tasks.  Returns the first match, or NULL.        */
 task_t *scheduler_find_task_by_name(const char *name);
 
+/* Remove a task from the ready queue (if present).  Call with
+ * interrupts disabled.  No-op if the task is not in the queue.      */
+void scheduler_remove_from_ready_queue(task_t *task);
+
 /* Remove a dead task from the global list and free its memory.
  * Does NOT free user page tables / frames (TODO: add page walker). */
 void scheduler_cleanup_task(task_t *task);
