@@ -35,6 +35,7 @@ static void cmd_help(void)
     printf("  move <src> <dst>     Move or rename a file\n");
     printf("  delete <file>        Delete a file\n");
     printf("  md <name>            Create a directory\n");
+    printf("  deletedir <name>     Remove an empty directory\n");
     printf("\n");
     printf("System:\n");
     printf("  say <text>           Print text\n");
@@ -343,6 +344,16 @@ static void cmd_bottom(const char *args)
     free(data);
 }
 
+static void cmd_deletedir(const char *args)
+{
+    if (!args || !*args) {
+        printf("Usage: deletedir <directory>\n");
+        return;
+    }
+    if (rmdir(args) != 0)
+        printf("deletedir: cannot remove '%s' (not found or not empty)\n", args);
+}
+
 static void cmd_end(const char *args)
 {
     if (!args || !*args) {
@@ -474,6 +485,7 @@ static void process_command(char *cmd)
     else if (strcmp(cmd, "move") == 0)    cmd_move(args);
     else if (strcmp(cmd, "delete") == 0)  cmd_delete(args);
     else if (strcmp(cmd, "md") == 0)      cmd_md(args);
+    else if (strcmp(cmd, "deletedir") == 0) cmd_deletedir(args);
     else if (strcmp(cmd, "pid") == 0)     cmd_pid();
     else if (strcmp(cmd, "disk") == 0)    cmd_disk(args);
     else if (strcmp(cmd, "end") == 0)     cmd_end(args);

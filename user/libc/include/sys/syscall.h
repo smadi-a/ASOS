@@ -34,6 +34,7 @@
 #define SYS_MKDIR    24
 #define SYS_RENAME   25
 #define SYS_COPY     26
+#define SYS_RMDIR    27
 
 static inline int64_t __syscall0(uint64_t num)
 {

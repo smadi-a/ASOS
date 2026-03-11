@@ -26,4 +26,10 @@ bool keyboard_read_char(char *c);
  */
 char keyboard_wait_char(void);
 
+/*
+ * Called when Ctrl+C is detected.  Sends a signal (0x03) to the
+ * foreground process, or puts ETX in the buffer if no foreground task.
+ */
+void keyboard_signal_interrupt(void);
+
 #endif /* KEYBOARD_H */

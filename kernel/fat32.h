@@ -215,4 +215,12 @@ int fat32_remove_dir_entry_only(uint32_t dir_cluster, const char *name_83);
  */
 int fat32_update_dotdot(uint32_t dir_cluster, uint32_t new_parent_cluster);
 
+/*
+ * Remove an empty subdirectory.  Verifies the directory contains only
+ * ".", "..", deleted, or end-of-directory entries.  Frees the directory's
+ * cluster chain and removes the parent entry.
+ * Returns 0 on success, -1 on error (not empty, not a directory).
+ */
+int fat32_rmdir(uint32_t parent_cluster, const char *name_83);
+
 #endif /* FAT32_H */

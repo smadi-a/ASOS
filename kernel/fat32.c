@@ -1154,6 +1154,69 @@ int fat32_update_dotdot(uint32_t dir_cluster, uint32_t new_parent_cluster)
     return ata_write_sectors(g_drive, g_part_lba + dir_lba, 1, g_sec);
 }
 
+/* Check if a directory is empty (only ".", "..", deleted, end entries). */
+static int dir_is_empty(uint32_t dir_cluster)
+{
+    uint32_t cluster = dir_cluster;
+
+    while (cluster >= 2U && cluster < FAT32_EOC) {
+        uint32_t lba = cluster_lba(cluster);
+
+        for (uint8_t s = 0; s < g_spc; s++) {
+            if (read_sec(lba + s) != 0) return 0; /* Error → not empty */
+
+            const FAT32DirEnt *entries = (const FAT32DirEnt *)g_sec;
+            int per_sector = 512 / (int)sizeof(FAT32DirEnt);
+
+            for (int e = 0; e < per_sector; e++) {
+                const FAT32DirEnt *ent = &entries[e];
+
+                if (ent->name[0] == 0x00) return 1;  /* End → empty */
+                if (ent->name[0] == 0xE5) continue;   /* Deleted */
+
+                /* Skip "." and ".." */
+                if (ent->name[0] == '.' && ent->name[1] == ' ') continue;
+                if (ent->name[0] == '.' && ent->name[1] == '.' &&
+                    ent->name[2] == ' ') continue;
+
+                /* Any other entry → not empty */
+                return 0;
+            }
+        }
+
+        cluster = next_cluster(cluster);
+    }
+    return 1; /* Exhausted chain → empty */
+}
+
+int fat32_rmdir(uint32_t parent_cluster, const char *name_83)
+{
+    /* Find the entry. */
+    fat32_entry_info_t entry;
+    if (fat32_find_entry(parent_cluster, name_83, &entry) != 0)
+        return -1;
+
+    /* Must be a directory. */
+    if (!entry.is_directory) return -1;
+
+    /* Must be empty. */
+    if (!dir_is_empty(entry.first_cluster)) {
+        serial_puts("[FAT32] rmdir: directory not empty\n");
+        return -1;
+    }
+
+    /* Free the directory's cluster chain. */
+    if (entry.first_cluster >= 2)
+        fat32_free_chain(entry.first_cluster);
+
+    /* Remove the parent directory entry. */
+    if (fat32_remove_dir_entry_only(parent_cluster, name_83) != 0)
+        return -1;
+
+    serial_puts("[FAT32] Removed directory\n");
+    return 0;
+}
+
 int fat32_move_entry(uint32_t src_dir_cluster, const char *src_name_83,
                      uint32_t dst_dir_cluster, const char *dst_name_83)
 {

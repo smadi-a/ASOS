@@ -164,9 +164,22 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t count)
 
     char *buf = (char *)(uintptr_t)buf_addr;
 
+    task_t *cur = scheduler_get_current();
+
     /* Block until at least one character is available. */
     uint64_t bytes_read = 0;
     while (bytes_read == 0) {
+        /* Check for pending signal (Ctrl+C). */
+        if (cur->pending_signal) {
+            uint8_t sig = cur->pending_signal;
+            cur->pending_signal = 0;
+            if (sig == 0x03) {
+                /* Deliver ETX (0x03) to the user buffer so gets_s can detect it. */
+                buf[0] = 0x03;
+                return 1;
+            }
+        }
+
         char c;
         if (keyboard_read_char(&c)) {
             buf[bytes_read++] = c;
@@ -191,6 +204,7 @@ static void sys_exit(int status)
 {
     task_t *cur = scheduler_get_current();
     cur->exit_status = status;
+    cur->is_foreground = 0;
 
     serial_puts("[SYSCALL] Task ");
     sc_put_dec(cur->id);
@@ -290,6 +304,8 @@ static int64_t sys_spawn(uint64_t path_addr, uint64_t argv_addr)
     }
 
     child->parent_pid = cur->id;
+    child->is_foreground = 1;
+    cur->is_foreground = 0;
     strncpy(child->cwd, cur->cwd, sizeof(child->cwd) - 1);
     child->cwd[sizeof(child->cwd) - 1] = '\0';
     scheduler_add_task(child);
@@ -323,6 +339,7 @@ static int64_t sys_waitpid(uint64_t pid, uint64_t status_addr)
             int64_t child_pid = (int64_t)child->id;
             int child_status = child->exit_status;
             scheduler_cleanup_task(child);
+            cur->is_foreground = 1;
             interrupts_enable();
 
             /* Store exit status in user space. */
@@ -989,6 +1006,28 @@ static int64_t sys_copy(uint64_t src_path_addr, uint64_t dst_path_addr)
     return (int64_t)rc;
 }
 
+static int64_t sys_rmdir(uint64_t path_addr)
+{
+    if (path_addr >= USER_ADDR_LIMIT) return -1;
+
+    char path[256];
+    const char *user_path = (const char *)(uintptr_t)path_addr;
+    int i;
+    for (i = 0; i < 255 && user_path[i]; i++) path[i] = user_path[i];
+    path[i] = '\0';
+
+    task_t *cur = scheduler_get_current();
+    char resolved[256];
+    if (vfs_resolve_path(path, cur->cwd, resolved, sizeof(resolved)) != 0)
+        return -1;
+
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    int rc = vfs_rmdir(resolved);
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return (int64_t)rc;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -1025,6 +1064,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_MKDIR:   return sys_mkdir(arg1);
     case SYS_RENAME:  return sys_rename(arg1, arg2);
     case SYS_COPY:    return sys_copy(arg1, arg2);
+    case SYS_RMDIR:   return sys_rmdir(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

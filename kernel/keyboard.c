@@ -12,6 +12,8 @@
 
 #include "keyboard.h"
 #include "ring_buffer.h"
+#include "scheduler.h"
+#include "framebuffer.h"
 #include "isr.h"
 #include "pic.h"
 #include "io.h"
@@ -66,6 +68,7 @@ static const char g_sc_shifted[89] = {
 
 static ring_buffer_t g_kbd_buf;
 static bool g_shift = false;
+static bool g_ctrl  = false;
 
 /* ── IRQ 1 handler ────────────────────────────────────────────────────────*/
 
@@ -84,9 +87,21 @@ static void kbd_irq_handler(InterruptFrame *frame)
         return;
     }
 
+    /* Track ctrl key (make = 0x1D). */
+    if (make == 0x1D) {
+        g_ctrl = !is_break;
+        return;
+    }
+
     /* Ignore all break codes. */
     if (is_break)
         return;
+
+    /* Ctrl+C detection: scancode 0x2E = 'c' key. */
+    if (g_ctrl && make == 0x2E) {
+        keyboard_signal_interrupt();
+        return;
+    }
 
     /* Translate make code to ASCII. */
     if (make >= sizeof(g_sc_normal))
@@ -134,4 +149,28 @@ char keyboard_wait_char(void)
     while (!keyboard_read_char(&c))
         __asm__ volatile ("hlt");
     return c;
+}
+
+void keyboard_signal_interrupt(void)
+{
+    /* Echo ^C to framebuffer and serial. */
+    serial_puts("^C\n");
+    fb_puts("^C\n", COLOR_WHITE, COLOR_BLACK);
+
+    /* Find the foreground process and set its pending signal. */
+    /* Walk PIDs — we're in IRQ context so keep it simple. */
+    for (uint64_t pid = 1; pid < 1000; pid++) {
+        task_t *t = scheduler_find_task_by_pid(pid);
+        if (!t) continue;
+        if (t->state == TASK_DEAD) continue;
+        if (t->is_foreground) {
+            t->pending_signal = 0x03;  /* ETX / SIGINT */
+            serial_puts("[KBD] Ctrl+C sent to foreground process\n");
+            return;
+        }
+    }
+
+    /* No foreground process — put ETX in the keyboard buffer so
+     * the shell's gets_s can handle it. */
+    ring_buffer_write(&g_kbd_buf, 0x03);
 }

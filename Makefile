@@ -349,6 +349,7 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) user-programs | $(BUILD)
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/shell.elf ::SHELL.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/echo.elf  ::ECHO.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/cat.elf   ::CAT.ELF
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/loop.elf  ::LOOP.ELF
 
 	@echo "Disk image ready: $(DISK_IMG)"
 

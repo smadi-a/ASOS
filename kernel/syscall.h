@@ -35,6 +35,7 @@
 #define SYS_MKDIR    24
 #define SYS_RENAME   25
 #define SYS_COPY     26
+#define SYS_RMDIR    27
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

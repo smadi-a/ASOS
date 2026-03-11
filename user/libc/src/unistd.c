@@ -188,6 +188,13 @@ int mkdir(const char *path)
     return 0;
 }
 
+int rmdir(const char *path)
+{
+    int64_t ret = __syscall1(SYS_RMDIR, (uint64_t)(uintptr_t)path);
+    if (ret < 0) { errno = EIO; return -1; }
+    return 0;
+}
+
 int rename(const char *oldpath, const char *newpath)
 {
     int64_t ret = __syscall2(SYS_RENAME, (uint64_t)(uintptr_t)oldpath,
