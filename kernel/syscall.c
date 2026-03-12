@@ -22,6 +22,7 @@
 #include "wm.h"
 #include "string.h"
 #include "power.h"
+#include "pit.h"
 #include "../shared/gfx.h"
 #include <stdint.h>
 
@@ -1391,6 +1392,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_KEY_POLL:   return sys_key_poll();
     case SYS_GET_EVENT:  return sys_get_event(arg1);
     case SYS_SHUTDOWN:   sys_shutdown(); return 0; /* never reached */
+    case SYS_UPTIME:     return (int64_t)pit_get_ticks();
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

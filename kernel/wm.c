@@ -64,7 +64,7 @@
 #define LAUNCHER_BTN_W   60              /* "ASOS" button width           */
 #define LAUNCHER_MENU_W 140              /* Drop-down menu width          */
 #define LAUNCHER_ITEM_H  24              /* Menu item height              */
-#define LAUNCHER_NUM_ITEMS  4            /* Terminal, Calculator, Pencil, Shutdown */
+#define LAUNCHER_NUM_ITEMS  5            /* Terminal, Calculator, Pencil, Note, Shutdown */
 
 /* ── Global state ──────────────────────────────────────────────────────── */
 
@@ -86,6 +86,7 @@ static bool      s_launcher_open = false;
 static void launcher_spawn_terminal(void);
 static void launcher_spawn_calculator(void);
 static void launcher_spawn_pencil(void);
+static void launcher_spawn_note(void);
 static void launcher_shutdown(void);
 
 /* ── Internal helpers ──────────────────────────────────────────────────── */
@@ -321,7 +322,8 @@ void wm_handle_mouse(int x, int y, bool clicked)
                             if (mi == 0) launcher_spawn_terminal();
                             if (mi == 1) launcher_spawn_calculator();
                             if (mi == 2) launcher_spawn_pencil();
-                            if (mi == 3) launcher_shutdown();
+                            if (mi == 3) launcher_spawn_note();
+                            if (mi == 4) launcher_shutdown();
                             goto mouse_done;
                         }
                     }
@@ -613,6 +615,47 @@ static void launcher_spawn_pencil(void)
 }
 
 /*
+ * Spawn the note-taking application (NOTE.ELF).
+ */
+static void launcher_spawn_note(void)
+{
+    uint64_t kernel_pml4 = vmm_get_kernel_pml4();
+    vmm_switch_address_space(kernel_pml4);
+
+    vfs_file_t elf_file;
+    if (vfs_open("/NOTE.ELF", &elf_file) != 0) {
+        serial_puts("[LAUNCHER] NOTE.ELF not found\n");
+        return;
+    }
+
+    uint32_t fsz = vfs_size(&elf_file);
+    void *elf_buf = kmalloc(fsz);
+    uint32_t got = 0;
+    if (vfs_read(&elf_file, elf_buf, fsz, &got) != 0 || got == 0) {
+        kfree(elf_buf);
+        vfs_close(&elf_file);
+        serial_puts("[LAUNCHER] Failed to read NOTE.ELF\n");
+        return;
+    }
+    vfs_close(&elf_file);
+
+    task_t *child = task_create_from_elf("note", elf_buf, got);
+    kfree(elf_buf);
+
+    if (!child) {
+        serial_puts("[LAUNCHER] Failed to create note process\n");
+        return;
+    }
+
+    child->parent_pid = 0;
+    strncpy(child->cwd, "/", sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
+    scheduler_add_task(child);
+
+    serial_puts("[LAUNCHER] Spawned note\n");
+}
+
+/*
  * Power off the machine.  Uses the QEMU/Bochs debug-exit port first,
  * then tries ACPI PM1a_CNT (works on QEMU + VirtualBox with ACPI).
  * As a last resort, triple-fault to force a reset.
@@ -640,7 +683,7 @@ static void wm_draw_launcher_menu(void)
                   LAUNCHER_MENU_W - 2, menu_h - 2, COL_LAUNCHER_MENU);
 
     /* Menu items */
-    static const char *items[LAUNCHER_NUM_ITEMS] = { "Terminal", "Calculator", "Pencil", "Shutdown" };
+    static const char *items[LAUNCHER_NUM_ITEMS] = { "Terminal", "Calculator", "Pencil", "Note", "Shutdown" };
     for (int i = 0; i < LAUNCHER_NUM_ITEMS; i++) {
         int item_y = menu_y + 1 + i * LAUNCHER_ITEM_H;
 
