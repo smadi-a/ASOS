@@ -158,6 +158,30 @@ static int64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t count)
     return (int64_t)count;
 }
 
+/*
+ * wm_kbd_allowed — Check if the calling process is allowed to read the
+ * keyboard.  When the WM has user windows (g_window_count > 1), only the
+ * process that owns the focused window (or a direct child of that owner)
+ * may consume key events.  When no user windows exist, any process may
+ * read the keyboard (backward compat with the text-only shell).
+ */
+static bool wm_kbd_allowed(task_t *cur)
+{
+    if (g_window_count <= 1)
+        return true;   /* No user windows — text-mode, allow all */
+
+    uint32_t owner = wm_get_focused_owner();
+    if (owner == 0)
+        return false;  /* No focused window — nobody gets keys */
+
+    if ((uint32_t)cur->id == owner)
+        return true;
+    if ((uint32_t)cur->parent_pid == owner)
+        return true;
+
+    return false;
+}
+
 static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t count)
 {
     if (fd != 0) return -1;
@@ -183,18 +207,24 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t count)
             }
         }
 
-        char c;
-        if (keyboard_read_char(&c)) {
-            buf[bytes_read++] = c;
-        } else {
-            __asm__ volatile ("sti" ::: "memory");
-            scheduler_yield();
-            __asm__ volatile ("cli" ::: "memory");
+        /* Only consume keyboard input if this process is associated
+         * with the currently focused WM window. */
+        if (wm_kbd_allowed(cur)) {
+            char c;
+            if (keyboard_read_char(&c)) {
+                buf[bytes_read++] = c;
+                continue;
+            }
         }
+
+        __asm__ volatile ("sti" ::: "memory");
+        scheduler_yield();
+        __asm__ volatile ("cli" ::: "memory");
     }
 
     /* Read any additional available characters (non-blocking). */
     while (bytes_read < count) {
+        if (!wm_kbd_allowed(cur)) break;
         char c;
         if (!keyboard_read_char(&c)) break;
         buf[bytes_read++] = c;
@@ -1263,9 +1293,14 @@ static int64_t sys_gfx_info(uint64_t buf_addr)
 /*
  * sys_key_poll — Non-blocking keyboard read.
  * Returns the next key character (0–255) if one is pending, or -1 if none.
+ * Only delivers keys to the process that owns the focused WM window.
  */
 static int64_t sys_key_poll(void)
 {
+    task_t *cur = scheduler_get_current();
+    if (!wm_kbd_allowed(cur))
+        return -1;
+
     char c;
     if (keyboard_read_char(&c))
         return (int64_t)(uint8_t)c;

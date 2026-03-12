@@ -226,6 +226,18 @@ void wm_destroy_by_owner(uint32_t pid)
     }
 }
 
+/* ── wm_get_focused_owner ───────────────────────────────────────────────── */
+
+uint32_t wm_get_focused_owner(void)
+{
+    for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
+        window_t *w = g_windows[i];
+        if (w && w->in_use && w->focused)
+            return w->owner_pid;
+    }
+    return 0;   /* no focused user window */
+}
+
 /* ── wm_handle_mouse ───────────────────────────────────────────────────── */
 
 void wm_handle_mouse(int x, int y, bool clicked)
