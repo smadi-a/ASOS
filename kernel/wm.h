@@ -92,4 +92,10 @@ int wm_update_window(int win_id, const uint32_t *pixels);
  */
 void wm_destroy_by_owner(uint32_t pid);
 
+/*
+ * Returns the owner PID of the currently focused user window, or 0 if
+ * no user window is focused (only the root window / wallpaper exists).
+ */
+uint32_t wm_get_focused_owner(void);
+
 #endif /* KERNEL_WM_H */
