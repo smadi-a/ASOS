@@ -44,8 +44,8 @@ Languages of choice:
 - [x] Window manager and compositor
 - [x] Desktop environment
 - [x] Build a terminal emulator
-- [ ] GUI toolkit and syscall API for apps
-- [ ] Start button for the desktop which includes shutdown and a shortcut to our GUI apps (the terminal emulator)
+- [x] GUI toolkit and syscall API for apps
+- [ ] Start button for the desktop which includes shutdown and a shortcut to our GUI apps (the terminal emulator for now)
 - [ ] Basic desktop apps: calculator, text editor, drawing app
 - [ ] Port DOOM to ASOS
 - [ ] Will not do: PCI bus enumeration

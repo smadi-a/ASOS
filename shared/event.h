@@ -16,6 +16,8 @@
 #define EVENT_MOUSE_MOVE  3   /* x, y = absolute cursor position      */
 #define EVENT_MOUSE_DOWN  4   /* x, y = position; code = button mask  */
 #define EVENT_MOUSE_UP    5   /* x, y = position; code = button mask  */
+#define EVENT_WIN_CLOSE   6   /* Window close button clicked           */
+#define EVENT_WIN_RESIZE  7   /* code = win_id; x = new_w, y = new_h  */
 
 typedef struct {
     uint8_t  type;    /* EVENT_* constant                     */
