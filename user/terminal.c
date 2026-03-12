@@ -50,11 +50,13 @@ static inline long win_create(const char *title, int x, int y, int w, int h)
                       (uint64_t)(int64_t)h);
 }
 
-static inline long win_update(int win_id, const uint32_t *pixels)
+static inline long win_update(int win_id, const uint32_t *pixels,
+                              uint64_t buf_bytes)
 {
-    return __syscall2(SYS_WIN_UPDATE,
+    return __syscall3(SYS_WIN_UPDATE,
                       (uint64_t)(uint32_t)win_id,
-                      (uint64_t)(uintptr_t)pixels);
+                      (uint64_t)(uintptr_t)pixels,
+                      buf_bytes);
 }
 
 static inline long key_poll(void)
@@ -812,7 +814,7 @@ int main(void)
     /* Initial render */
     term_redraw();
     if (win_id >= 0)
-        win_update((int)win_id, s_pixels);
+        win_update((int)win_id, s_pixels, sizeof(s_pixels));
     gfx_flush_display();
 
     /* ── Event loop ─────────────────────────────────────────────────────── */
@@ -854,7 +856,7 @@ int main(void)
         if (s_dirty) {
             term_redraw();
             if (win_id >= 0)
-                win_update((int)win_id, s_pixels);
+                win_update((int)win_id, s_pixels, sizeof(s_pixels));
             gfx_flush_display();
             s_dirty = 0;
         } else {

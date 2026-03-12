@@ -292,23 +292,7 @@ void wm_handle_mouse(int x, int y, bool clicked)
                         x >= close_x && x < close_x + 16 &&
                         y >= w->y + 2 && y < w->y + WM_TITLEBAR_H - 2)
                     {
-                        /* Push EVENT_WIN_CLOSE to the owning process
-                         * instead of destroying immediately.  The app
-                         * can then clean up and exit gracefully. */
-                        task_t *owner = scheduler_find_task_by_pid(
-                                            (uint64_t)w->owner_pid);
-                        if (owner) {
-                            event_t ce;
-                            ce.type = EVENT_WIN_CLOSE;
-                            ce._pad = 0;
-                            ce.x    = 0;
-                            ce.y    = 0;
-                            ce.code = (uint16_t)w->id;
-                            task_push_event(owner, &ce);
-                        } else {
-                            /* Owner already dead — destroy directly. */
-                            wm_destroy(w->id);
-                        }
+                        wm_destroy(w->id);
                         break;
                     }
                 }
@@ -500,19 +484,11 @@ void wm_compose(void)
         }
     }
 
-    /* 1b. Drain keyboard buffer and push key events to focused owner. */
-    if (g_window_count > 1) {
-        char kc;
-        while (keyboard_read_char(&kc)) {
-            event_t kevt;
-            kevt.type = EVENT_KEY_PRESS;
-            kevt._pad = 0;
-            kevt.x    = 0;
-            kevt.y    = 0;
-            kevt.code = (uint16_t)(uint8_t)kc;
-            wm_push_event_to_focused(&kevt);
-        }
-    }
+    /* 1b. Keyboard events are NOT drained here.  Processes that use the
+     *     legacy key_poll() syscall read directly from the keyboard ring
+     *     buffer.  GUI-toolkit apps should use SYS_GET_EVENT instead;
+     *     keyboard events will be routed there once a per-window input
+     *     model is in place. */
 
     /* 2. Root window — fill entire screen with wallpaper colour. */
     gfx_fill_rect(0, 0, (int)sw, (int)sh, COL_WALLPAPER);
