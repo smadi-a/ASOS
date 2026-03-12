@@ -20,7 +20,7 @@ For VirtualBox: attach `build/asos.vdi` to an **IDE controller (Primary Master)*
 ```
 bootloader/main.c         UEFI application; sets up page tables, jumps to kernel
 kernel/                   Monolithic kernel (C + NASM)
-  main.c                  Entry: BSS clear → serial → fb → GDT → IDT → PMM → VMM → heap → scheduler
+  main.c                  Entry: BSS clear → serial → fb → GDT → IDT → PMM → VMM → heap → gfx → wm → scheduler → DESKTOP.ELF
   *.c / *.h               One subsystem per file pair (see Subsystems below)
   *.asm                   NASM assembly (GDT flush, ISR stubs, context switch, syscall entry)
 shared/boot_info.h        BootInfo struct shared between bootloader and kernel
@@ -29,6 +29,7 @@ linker.ld                 Kernel linker script (VMA 0xFFFFFFFF80100000, LMA 0x10
 user/                     Ring-3 user programs
   libc/                   libasos.a — freestanding C runtime (printf, malloc, string, etc.)
   shell.c, hello.c, …     User programs linked against libasos.a
+  desktop.c, win_test.c   GUI user programs (window manager clients)
   gfxtest.c, loop.c       Additional user programs
   user.ld                 User linker script (base 0x400000)
   start.asm               _start: zero BSS, align stack, call main, exit
@@ -172,20 +173,36 @@ Key syscalls:
 | 26 | `copy` | Copy file |
 | 27 | `rmdir` | Remove directory |
 | 28 | `gfx_draw` | Submit GfxCmd to back buffer |
-| 29 | `gfx_flush` | Blit back buffer to framebuffer |
+| 29 | `gfx_flush` | Compose windows + blit back buffer to framebuffer |
 | 30 | `gfx_info` | Query display dimensions (w, h) |
+| 31 | `win_create` | Create a WM window (title, x, y, w, h) → win_id |
+| 32 | `win_update` | Upload pixel buffer to window client area |
+| 33 | `key_poll` | Non-blocking keyboard read → char or -1 |
 
 ### GFX Library (`gfx.c`, `gfx.h`, `shared/gfx.h`)
 
-Double-buffered 2D graphics library. A back buffer is allocated via `kmalloc` at init time; drawing operations target the back buffer; `gfx_flush` blits row-by-row to the GOP linear framebuffer (handles pitch ≠ width×4).
+Double-buffered 2D graphics library. A back buffer is allocated via `kmalloc` at init time; drawing operations target the back buffer; `gfx_flush` runs `wm_compose()` then blits row-by-row to the GOP linear framebuffer (handles pitch ≠ width×4).
 
 - **`shared/gfx.h`**: `GfxCmd` struct + `GFX_OP_*` constants shared between kernel and user space.
-- **Operations**: `GFX_OP_FILL_RECT`, `GFX_OP_DRAW_RECT`, `GFX_OP_PUT_PIXEL`, `GFX_OP_HLINE` (length in `w`), `GFX_OP_VLINE` (length in `h`), `GFX_OP_DRAW_STRING` (`w` = bg_color), `GFX_OP_CLEAR`.
+- **Operations**: `GFX_OP_FILL_RECT`, `GFX_OP_DRAW_RECT`, `GFX_OP_PUT_PIXEL`, `GFX_OP_HLINE` (length in `w`), `GFX_OP_VLINE` (length in `h`), `GFX_OP_DRAW_STRING` (`w` = bg_color), `GFX_OP_CLEAR`, `GFX_OP_BLIT` (x, y, src_w, src_h, ptr, ptr_len).
 - **Font**: 8×16 VGA bitmap font.
 - **Color**: stored as BGRA; RGB input swaps R↔B at draw time if framebuffer uses BGR layout.
-- **Syscall flow**: user calls `gfx_draw(cmd)` → `SYS_GFX_DRAW(28)` copies cmd to kernel and renders into back buffer. `gfx_flush()` → `SYS_GFX_FLUSH(29)` copies back buffer to framebuffer (requires kernel CR3 for identity-mapped framebuffer access). `gfx_info(w,h)` → `SYS_GFX_INFO(30)` returns display dimensions.
+- **Syscall flow**: user calls `gfx_draw(cmd)` → `SYS_GFX_DRAW(28)` copies cmd to kernel and renders into back buffer. `gfx_flush()` → `SYS_GFX_FLUSH(29)` runs compositor then copies back buffer to framebuffer (requires kernel CR3 for identity-mapped framebuffer access). `gfx_info(w,h)` → `SYS_GFX_INFO(30)` returns display dimensions.
 - **User pointer validation**: ptr < 0x7FFFFFFFFFFF and size ≤ 4 MB checked before kernel dereference.
 - No CR3 switch needed for `sys_gfx_draw` (kernel heap accessible with any CR3); CR3 switch required in `sys_gfx_flush` only.
+
+### Window Manager (`wm.c`, `wm.h`)
+
+Layered compositor and window manager. Manages up to 16 windows (slot 0 = root/wallpaper, slots 1–15 = user windows).
+
+- **`window_t`**: id, x, y, w, h, title[64], buffer (kernel-heap pixel buffer), flags, focused, in_use.
+- **Flags**: `WM_FLAG_NO_MOVE`, `WM_FLAG_NO_CLOSE`, `WM_FLAG_BOTTOM`.
+- **API**: `wm_init()`, `wm_create(title, x, y, w, h)` → win_id, `wm_destroy(win_id)`, `wm_update_window(win_id, pixels)`, `wm_handle_mouse(x, y, clicked)`, `wm_compose()`.
+- **Compositor layer order** (Painter's Algorithm): root window (wallpaper, 0x223344) → normal windows back-to-front (title bar 20 px + close button + client area) → taskbar (28 px at top: tabs + system clock) → mouse cursor (8×8).
+- **Taskbar**: active tab = 0x3A6DB5 (blue), inactive = 0x3C3C3C; system clock HH:MM:SS right-aligned.
+- **Focus**: new windows steal focus; `wm_handle_mouse` hit-tests top-to-bottom (highest slot first), handles close button and drag.
+- **Syscall handlers**: `sys_win_create` validates title ptr + copies 64 bytes; `sys_win_update` validates win_id + pixel buf, copies w×h×4 bytes; `sys_key_poll` non-blocking keyboard drain.
+- `wm_compose()` is called automatically inside `sys_gfx_flush` before blitting.
 
 ### ELF Loader (`elf.c`)
 
@@ -199,7 +216,8 @@ Freestanding static library. Headers in `user/libc/include/`. Key modules:
 - `stdio`: `printf`/`vsnprintf` (width, zero-pad, %d/%u/%x/%p/%s/%c/%%/`%l`), `getchar`, `gets_s`.
 - `stdlib`: `malloc`/`free` (free-list, 16-byte aligned, split+coalesce), `exit`.
 - `string`, `ctype`, `unistd` (spawn, waitpid, read, write, mkdir, rename, copy), `errno`.
-- `gfx`: `gfx_draw(GfxCmd*)` → `SYS_GFX_DRAW`; `gfx_flush_display()` → `SYS_GFX_FLUSH`; inline helpers in `gfx.h` (gfx_clear, gfx_fill_rect, gfx_draw_rect, gfx_put_pixel, gfx_hline, gfx_vline, gfx_puts). Color constants in `gfx_colors.h`.
+- `gfx`: `gfx_draw(GfxCmd*)` → `SYS_GFX_DRAW`; `gfx_flush_display()` → `SYS_GFX_FLUSH`; `gfx_screen_info(w,h)` → `SYS_GFX_INFO`; inline helpers in `gfx.h` (gfx_clear, gfx_fill_rect, gfx_draw_rect, gfx_put_pixel, gfx_hline, gfx_vline, gfx_puts). Color constants in `gfx_colors.h`.
+- `wm`: `win_create(title, x, y, w, h)` → `SYS_WIN_CREATE`; `win_update(win_id, pixels)` → `SYS_WIN_UPDATE`; `key_poll()` → `SYS_KEY_POLL`. Inline wrappers declared directly in user programs (not yet in libasos).
 - `malloc` backed by `sbrk` syscall; heap grows from top of highest ELF PT_LOAD segment up to user stack.
 
 ### User programs
@@ -215,6 +233,8 @@ String literals work in ELF programs (`.rodata` is mapped). String literals do *
 - `cat.c` — Print file contents
 - `gfxtest.c` — GFX demo (draws shapes + text, runs as `GFXTEST.ELF`)
 - `loop.c` — Repeatedly prints a string (scheduler stress test)
+- `desktop.c` — Init process (PID 2); creates Terminal WM window (600×380), spawns `SHELL.ELF` (PID 3), drives compositor via `gfx_flush_display()` render loop. Static pixel buffer (~891 KB BSS). Does NOT use `key_poll` (would steal keys from shell).
+- `win_test.c` — WM test app; bouncing orange square (20×20) over teal gradient background in a 200×150 window; exits on 'Q' via `key_poll`.
 
 ### Shell (`user/shell.c`)
 
@@ -245,8 +265,8 @@ External programs: shell uppercases the name and appends `.ELF` if no extension,
 ## Next Milestones
 
 - [x] Graphics framebuffer library
-- [ ] Window manager and compositor
-- [ ] Desktop environment + GUI toolkit
+- [x] Window manager and compositor
+- [x] Desktop environment + GUI toolkit
 - [ ] PCI bus enumeration
 - [ ] Network driver + TCP/IP stack
 - [ ] Buddy allocator (replace bitmap PMM)
