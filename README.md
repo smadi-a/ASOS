@@ -41,7 +41,7 @@ Languages of choice:
 - [x] Add basic ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, kill/end, df/disk, clear/clean)
 - [x] PS/2 mouse Drivers
 - [x] Graphics framebuffer library
-- [ ] Window manager and compositor
+- [x] Window manager and compositor
 - [ ] Desktop environment
 - [ ] GUI toolkit and syscall API for apps
 - [ ] Basic desktop apps: calculator, text editor, file manager, system settings, drawing app, a system monitor, terminal emulator, image viewer

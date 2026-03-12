@@ -19,6 +19,7 @@
 #include "heap.h"
 #include "elf.h"
 #include "gfx.h"
+#include "wm.h"
 #include "string.h"
 #include "../shared/gfx.h"
 #include <stdint.h>
@@ -1149,11 +1150,88 @@ static int64_t sys_gfx_flush(void)
 {
     task_t *cur = scheduler_get_current();
 
+    /*
+     * Let the window manager composite all windows into the back buffer.
+     * wm_compose() only accesses kernel heap and the mouse ring buffer —
+     * the identity map is not required, so no CR3 switch needed here.
+     */
+    wm_compose();
+
+    /* gfx_flush() writes to the identity-mapped hardware framebuffer,
+     * which requires the kernel page tables. */
     vmm_switch_address_space(vmm_get_kernel_pml4());
     gfx_flush();
     vmm_switch_address_space(cur->pml4_phys);
 
     return 0;
+}
+
+/*
+ * sys_win_create — Create a new WM window.
+ *
+ * arg1 = title_addr : user VA of NUL-terminated title string
+ * arg2 = x, arg3 = y : top-left corner (including title bar)
+ * arg4 = w, arg5 = h : client area dimensions
+ * Returns the window ID (>= 0) on success, -1 on failure.
+ */
+static int64_t sys_win_create(uint64_t title_addr, uint64_t x_u, uint64_t y_u,
+                               uint64_t w_u, uint64_t h_u)
+{
+#define WIN_USER_MAX 0x0000800000000000ULL
+    if (title_addr == 0 || title_addr >= WIN_USER_MAX) return -1;
+
+    int w = (int)(int64_t)w_u;
+    int h = (int)(int64_t)h_u;
+    if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
+
+    /* Copy title string from user space (user CR3 is active; kernel
+     * heap is mapped in all page tables via PML4[256–511]). */
+    char title[64];
+    const char *utitle = (const char *)(uintptr_t)title_addr;
+    int i;
+    for (i = 0; i < 63; i++) {
+        char c = utitle[i];
+        title[i] = c;
+        if (c == '\0') break;
+    }
+    title[63] = '\0';
+
+    return (int64_t)wm_create(title,
+                              (int)(int64_t)x_u,
+                              (int)(int64_t)y_u,
+                              w, h);
+#undef WIN_USER_MAX
+}
+
+/*
+ * sys_win_update — Copy user pixels into a window's kernel buffer.
+ *
+ * arg1 = win_id    : window ID returned by sys_win_create
+ * arg2 = buf_addr  : user VA of w*h uint32_t pixels (0xAARRGGBB)
+ * Returns 0 on success, -1 on error.
+ */
+static int64_t sys_win_update(uint64_t win_id, uint64_t buf_addr)
+{
+#define WIN_USER_MAX2 0x0000800000000000ULL
+    if (win_id >= MAX_WINDOWS) return -1;
+
+    window_t *w = g_windows[(int)win_id];
+    if (!w || !w->in_use) return -1;
+
+    uint64_t buf_size = (uint64_t)w->w * (uint64_t)w->h * 4ULL;
+    if (buf_size == 0 || buf_size > 4U * 1024U * 1024U) return -1;
+    if (buf_addr == 0 || buf_addr >= WIN_USER_MAX2) return -1;
+    if (buf_addr + buf_size > WIN_USER_MAX2) return -1;
+
+    /* Direct copy: user buffer is in user page tables; window buffer is
+     * in kernel heap (PML4[256–511], present in all address spaces). */
+    const uint8_t *src = (const uint8_t *)(uintptr_t)buf_addr;
+    uint8_t       *dst = (uint8_t *)w->buffer;
+    for (uint64_t i = 0; i < buf_size; i++)
+        dst[i] = src[i];
+
+    return 0;
+#undef WIN_USER_MAX2
 }
 
 /*
@@ -1174,14 +1252,23 @@ static int64_t sys_gfx_info(uint64_t buf_addr)
 #undef USER_ADDR_MAX_GI
 }
 
+/*
+ * sys_key_poll — Non-blocking keyboard read.
+ * Returns the next key character (0–255) if one is pending, or -1 if none.
+ */
+static int64_t sys_key_poll(void)
+{
+    char c;
+    if (keyboard_read_char(&c))
+        return (int64_t)(uint8_t)c;
+    return -1;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
                          uint64_t arg3, uint64_t arg4, uint64_t arg5)
 {
-    (void)arg4;
-    (void)arg5;
-
     switch (num) {
     case SYS_READ:    return sys_read(arg1, arg2, arg3);
     case SYS_WRITE:   return sys_write(arg1, arg2, arg3);
@@ -1211,9 +1298,12 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_RENAME:  return sys_rename(arg1, arg2);
     case SYS_COPY:    return sys_copy(arg1, arg2);
     case SYS_RMDIR:     return sys_rmdir(arg1);
-    case SYS_GFX_DRAW:  return sys_gfx_draw(arg1);
-    case SYS_GFX_FLUSH: return sys_gfx_flush();
-    case SYS_GFX_INFO:  return sys_gfx_info(arg1);
+    case SYS_GFX_DRAW:   return sys_gfx_draw(arg1);
+    case SYS_GFX_FLUSH:  return sys_gfx_flush();
+    case SYS_GFX_INFO:   return sys_gfx_info(arg1);
+    case SYS_WIN_CREATE: return sys_win_create(arg1, arg2, arg3, arg4, arg5);
+    case SYS_WIN_UPDATE: return sys_win_update(arg1, arg2);
+    case SYS_KEY_POLL:   return sys_key_poll();
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);
