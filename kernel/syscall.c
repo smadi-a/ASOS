@@ -21,6 +21,7 @@
 #include "gfx.h"
 #include "wm.h"
 #include "string.h"
+#include "power.h"
 #include "../shared/gfx.h"
 #include <stdint.h>
 
@@ -1389,6 +1390,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_WIN_UPDATE: return sys_win_update(arg1, arg2, arg3);
     case SYS_KEY_POLL:   return sys_key_poll();
     case SYS_GET_EVENT:  return sys_get_event(arg1);
+    case SYS_SHUTDOWN:   sys_shutdown(); return 0; /* never reached */
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

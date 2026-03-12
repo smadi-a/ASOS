@@ -43,6 +43,7 @@
 #define SYS_WIN_UPDATE 32  /* rdi=win_id, rsi=pixel_buf(VA), rdx=buf_size */
 #define SYS_KEY_POLL   33  /* no args — returns key char (0–255) or -1 if none  */
 #define SYS_GET_EVENT  34  /* rdi = ptr to event_t (user VA) → 0 if event popped, -1 if empty */
+#define SYS_SHUTDOWN   35  /* no args — power off the machine (does not return) */
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

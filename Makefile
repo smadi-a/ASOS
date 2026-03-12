@@ -189,7 +189,8 @@ KERNEL_C_SRCS := \
     kernel/syscall.c \
     kernel/elf.c \
     kernel/gfx.c \
-    kernel/wm.c
+    kernel/wm.c \
+    kernel/power.c
 
 KERNEL_ASM_SRCS := \
     kernel/gdt_flush.asm \
