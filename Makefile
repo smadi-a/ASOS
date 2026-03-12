@@ -179,6 +179,7 @@ KERNEL_C_SRCS := \
     kernel/pit.c \
     kernel/ring_buffer.c \
     kernel/keyboard.c \
+    kernel/mouse.c \
     kernel/ata.c \
     kernel/gpt.c \
     kernel/fat32.c \
