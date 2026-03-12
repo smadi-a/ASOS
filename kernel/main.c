@@ -58,11 +58,15 @@
 #include "syscall.h"
 #include "user_syscall.h"
 #include "elf.h"
+#include "gfx.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
 
 extern char __bss_start[];
 extern char __bss_end[];
+
+/* Framebuffer descriptor saved before RSP switch, used by gfx_init(). */
+static Framebuffer g_boot_fb;
 
 #define KSTACK_SIZE  16384
 static uint8_t g_kstack[KSTACK_SIZE] __attribute__((aligned(16)));
@@ -169,6 +173,12 @@ static void kernel_main2(void)
 
     heap_init();
     serial_puts("[OK] Heap\n");
+
+    gfx_init((void *)(uintptr_t)g_boot_fb.base,
+             g_boot_fb.width, g_boot_fb.height,
+             g_boot_fb.pitch, 32,
+             (uint32_t)g_boot_fb.format);
+    serial_puts("[OK] GFX\n");
 
     /* ── ATA + GPT + FAT32 ───────────────────────────────────────────── */
     ata_init();
@@ -518,6 +528,7 @@ void kernel_main(BootInfo *info)
     fb_init(&info->framebuffer);
     fb_clear(COLOR_BLACK);
     fb_set_cursor(0, 0);
+    g_boot_fb = info->framebuffer;
 
     gdt_init();
     serial_puts("[OK] GDT\n");
