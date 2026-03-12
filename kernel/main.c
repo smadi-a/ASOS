@@ -48,6 +48,7 @@
 #include "pic.h"
 #include "pit.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "string.h"
 #include "ata.h"
 #include "gpt.h"
@@ -416,6 +417,7 @@ static void kernel_main2(void)
     pic_init();
     pit_init();
     keyboard_init();
+    mouse_init();
 
     /* Enable hardware interrupts — must come AFTER PIC init and all
      * handler registrations.  Before this point any IRQ would be
@@ -487,6 +489,19 @@ static void kernel_main2(void)
 
     /* ── Idle loop — the scheduler runs everything else ───────────── */
     for (;;) {
+        /* Drain mouse events and print to serial for testing. */
+        mouse_event_t mevt;
+        while (mouse_read_event(&mevt)) {
+            serial_puts("[MOUSE] dx=");
+            if (mevt.dx < 0) { serial_putc('-'); serial_put_dec((uint64_t)(-(int64_t)mevt.dx)); }
+            else              serial_put_dec((uint64_t)mevt.dx);
+            serial_puts(" dy=");
+            if (mevt.dy < 0) { serial_putc('-'); serial_put_dec((uint64_t)(-(int64_t)mevt.dy)); }
+            else              serial_put_dec((uint64_t)mevt.dy);
+            serial_puts(" btn=");
+            serial_put_dec(mevt.buttons);
+            serial_putc('\n');
+        }
         __asm__ volatile ("hlt" ::: "memory");
     }
 }
