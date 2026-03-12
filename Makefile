@@ -215,7 +215,7 @@ USER_DIR  := user
 USER_ELFS := $(USER_DIR)/hello.elf $(USER_DIR)/shell.elf \
              $(USER_DIR)/echo.elf $(USER_DIR)/cat.elf \
              $(USER_DIR)/gfxtest.elf $(USER_DIR)/win_test.elf \
-             $(USER_DIR)/desktop.elf
+             $(USER_DIR)/desktop.elf $(USER_DIR)/terminal.elf
 
 .PHONY: all run clean deps check-tools vdi user-programs
 
@@ -358,6 +358,7 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) user-programs | $(BUILD)
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/gfxtest.elf  ::GFXTEST.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/win_test.elf  ::WINTEST.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/desktop.elf  ::DESKTOP.ELF
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/terminal.elf ::TERMINAL.ELF
 
 	@echo "Disk image ready: $(DISK_IMG)"
 

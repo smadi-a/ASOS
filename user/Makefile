@@ -16,7 +16,7 @@ CFLAGS   := -ffreestanding -nostdlib -nostdinc -fno-builtin \
 
 LDFLAGS  := -T user.ld -nostdlib
 
-PROGRAMS := hello.elf shell.elf echo.elf cat.elf loop.elf gfxtest.elf win_test.elf desktop.elf
+PROGRAMS := hello.elf shell.elf echo.elf cat.elf loop.elf gfxtest.elf win_test.elf desktop.elf terminal.elf
 
 .PHONY: all clean libc
 
