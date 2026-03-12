@@ -21,6 +21,11 @@
 #include "pit.h"
 #include "scheduler.h"
 #include "process.h"
+#include "vmm.h"
+#include "vfs.h"
+#include "serial.h"
+#include "io.h"
+#include "string.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -46,6 +51,20 @@
 #define TASKBAR_TAB_W  108
 #define TASKBAR_TAB_GAP  4
 
+/* ── Launcher (System menu) ───────────────────────────────────────────── */
+
+#define COL_LAUNCHER_BTN      0x2A5A9BUL   /* Blue system button          */
+#define COL_LAUNCHER_BTN_HI   0x3A7ACBUL   /* Hover highlight             */
+#define COL_LAUNCHER_MENU     0x2B2B2BUL   /* Menu background             */
+#define COL_LAUNCHER_HOVER    0x3A6DB5UL   /* Hovered menu item           */
+#define COL_LAUNCHER_TEXT     0xFFFFFFUL   /* Menu text                   */
+#define COL_LAUNCHER_BORDER   0x555555UL   /* Menu border                 */
+
+#define LAUNCHER_BTN_W   60              /* "ASOS" button width           */
+#define LAUNCHER_MENU_W 140              /* Drop-down menu width          */
+#define LAUNCHER_ITEM_H  24              /* Menu item height              */
+#define LAUNCHER_NUM_ITEMS  2            /* Terminal, Shutdown            */
+
 /* ── Global state ──────────────────────────────────────────────────────── */
 
 window_t *g_windows[MAX_WINDOWS];
@@ -58,6 +77,13 @@ static window_t *s_dragging = NULL;
 static int       s_last_x   = 0;
 static int       s_last_y   = 0;
 static bool      s_btn_prev = false;
+
+/* Launcher state */
+static bool      s_launcher_open = false;
+
+/* Forward declarations for launcher actions. */
+static void launcher_spawn_terminal(void);
+static void launcher_shutdown(void);
 
 /* ── Internal helpers ──────────────────────────────────────────────────── */
 
@@ -280,6 +306,33 @@ void wm_handle_mouse(int x, int y, bool clicked)
     if (clicked) {
         /* On button-down transition: hit-test windows topmost-first. */
         if (!s_btn_prev) {
+            /* ── Launcher menu item hit-test ────────────────────── */
+            if (s_launcher_open) {
+                int menu_x = 0;
+                int menu_y = TASKBAR_HEIGHT;
+                if (x >= menu_x && x < menu_x + LAUNCHER_MENU_W) {
+                    for (int mi = 0; mi < LAUNCHER_NUM_ITEMS; mi++) {
+                        int item_y = menu_y + 1 + mi * LAUNCHER_ITEM_H;
+                        if (y >= item_y && y < item_y + LAUNCHER_ITEM_H) {
+                            s_launcher_open = false;
+                            if (mi == 0) launcher_spawn_terminal();
+                            if (mi == 1) launcher_shutdown();
+                            goto mouse_done;
+                        }
+                    }
+                }
+                /* Clicked outside the menu — close it. */
+                s_launcher_open = false;
+            }
+
+            /* ── System button toggle ──────────────────────────── */
+            if (x >= 0 && x < LAUNCHER_BTN_W &&
+                y >= 0 && y < TASKBAR_HEIGHT)
+            {
+                s_launcher_open = !s_launcher_open;
+                goto mouse_done;
+            }
+
             /* Search from the top (highest slot index) downward; skip root. */
             for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
                 window_t *w = g_windows[i];
@@ -388,6 +441,7 @@ void wm_handle_mouse(int x, int y, bool clicked)
         }
     }
 
+mouse_done:
     s_btn_prev = clicked;
 }
 
@@ -406,6 +460,115 @@ int wm_update_window(int win_id, const uint32_t *pixels)
         dst[i] = src[i];
 
     return 0;
+}
+
+/* ── Launcher actions ──────────────────────────────────────────────────── */
+
+/*
+ * Spawn a new terminal: load DESKTOP.ELF from the VFS and create a process.
+ * Called from the WM compositor context (kernel CR3 is already active or we
+ * switch to it).  This mirrors the pattern used in kernel/main.c boot init.
+ */
+static void launcher_spawn_terminal(void)
+{
+    uint64_t kernel_pml4 = vmm_get_kernel_pml4();
+    vmm_switch_address_space(kernel_pml4);
+
+    vfs_file_t elf_file;
+    if (vfs_open("/DESKTOP.ELF", &elf_file) != 0) {
+        /* Fall back to a standalone shell. */
+        if (vfs_open("/SHELL.ELF", &elf_file) != 0) {
+            serial_puts("[LAUNCHER] No DESKTOP.ELF or SHELL.ELF found\n");
+            return;
+        }
+    }
+
+    uint32_t fsz = vfs_size(&elf_file);
+    void *elf_buf = kmalloc(fsz);
+    uint32_t got = 0;
+    if (vfs_read(&elf_file, elf_buf, fsz, &got) != 0 || got == 0) {
+        kfree(elf_buf);
+        vfs_close(&elf_file);
+        serial_puts("[LAUNCHER] Failed to read ELF\n");
+        return;
+    }
+    vfs_close(&elf_file);
+
+    task_t *child = task_create_from_elf("desktop", elf_buf, got);
+    kfree(elf_buf);
+
+    if (!child) {
+        serial_puts("[LAUNCHER] Failed to create process\n");
+        return;
+    }
+
+    child->parent_pid = 0;
+    strncpy(child->cwd, "/", sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
+    scheduler_add_task(child);
+
+    serial_puts("[LAUNCHER] Spawned terminal\n");
+}
+
+/*
+ * Power off the machine.  Uses the QEMU/Bochs debug-exit port first,
+ * then tries ACPI PM1a_CNT (works on QEMU + VirtualBox with ACPI).
+ * As a last resort, triple-fault to force a reset.
+ */
+static void launcher_shutdown(void)
+{
+    serial_puts("[SHUTDOWN] Powering off...\n");
+
+    /* QEMU -device isa-debug-exit,iobase=0x501 (exit code (val<<1)|1). */
+    outw(0x604, 0x2000);   /* ACPI shutdown (QEMU default PM1a port) */
+
+    /* Bochs/old QEMU shutdown port. */
+    outw(0xB004, 0x2000);
+
+    /* VirtualBox ACPI. */
+    outw(0x4004, 0x3400);
+
+    /* If we're still alive, halt. */
+    __asm__ volatile ("cli; hlt");
+    for (;;) __asm__ volatile ("hlt");
+}
+
+/* ── Launcher menu drawing ────────────────────────────────────────────── */
+
+static void wm_draw_launcher_menu(void)
+{
+    if (!s_launcher_open) return;
+
+    /* Menu appears just below the taskbar, aligned with the system button. */
+    int menu_x = 0;
+    int menu_y = TASKBAR_HEIGHT;
+    int menu_h = LAUNCHER_ITEM_H * LAUNCHER_NUM_ITEMS + 2;  /* +2 for border */
+
+    /* Border */
+    gfx_fill_rect(menu_x, menu_y, LAUNCHER_MENU_W, menu_h, COL_LAUNCHER_BORDER);
+    /* Inner background */
+    gfx_fill_rect(menu_x + 1, menu_y + 1,
+                  LAUNCHER_MENU_W - 2, menu_h - 2, COL_LAUNCHER_MENU);
+
+    /* Menu items */
+    static const char *items[LAUNCHER_NUM_ITEMS] = { "Terminal", "Shutdown" };
+    for (int i = 0; i < LAUNCHER_NUM_ITEMS; i++) {
+        int item_y = menu_y + 1 + i * LAUNCHER_ITEM_H;
+
+        /* Highlight if mouse is hovering. */
+        bool hover = (g_mouse_x >= menu_x &&
+                      g_mouse_x < menu_x + LAUNCHER_MENU_W &&
+                      g_mouse_y >= item_y &&
+                      g_mouse_y < item_y + LAUNCHER_ITEM_H);
+        uint32_t bg = hover ? COL_LAUNCHER_HOVER : COL_LAUNCHER_MENU;
+        gfx_fill_rect(menu_x + 1, item_y,
+                      LAUNCHER_MENU_W - 2, LAUNCHER_ITEM_H, bg);
+
+        /* Label centred vertically in the item. */
+        int text_y = item_y + (LAUNCHER_ITEM_H - 16) / 2;
+        gfx_draw_string(menu_x + 12, text_y, items[i],
+                        COL_LAUNCHER_TEXT, bg);
+    }
 }
 
 /* ── Taskbar ───────────────────────────────────────────────────────────── */
@@ -441,8 +604,19 @@ static void wm_draw_taskbar(uint32_t sw)
     int clk_y = (TASKBAR_HEIGHT - 16) / 2;   /* vertically centred */
     gfx_draw_string(clk_x, clk_y, clk, COL_TASKBAR_TEXT, COL_TASKBAR);
 
-    /* ── Window tabs (left side) ───────────────────────────────────── */
-    int tab_x   = 4;
+    /* ── System (ASOS) button at far left ─────────────────────────── */
+    {
+        uint32_t btn_col = s_launcher_open ? COL_LAUNCHER_BTN_HI
+                                           : COL_LAUNCHER_BTN;
+        gfx_fill_rect(0, 0, LAUNCHER_BTN_W, TASKBAR_HEIGHT, btn_col);
+        int label_cx = (LAUNCHER_BTN_W - 4 * 8) / 2;  /* centre "ASOS" */
+        int label_cy = (TASKBAR_HEIGHT - 16) / 2;
+        gfx_draw_string(label_cx, label_cy, "ASOS",
+                        COL_TASKBAR_TEXT, btn_col);
+    }
+
+    /* ── Window tabs (after system button) ─────────────────────────── */
+    int tab_x   = LAUNCHER_BTN_W + 4;
     int tab_h   = TASKBAR_HEIGHT - 6;
     int tab_y   = 3;
     int label_y = (TASKBAR_HEIGHT - 16) / 2;
@@ -557,6 +731,9 @@ void wm_compose(void)
 
     /* 4. Taskbar — drawn after all windows so it is always visible. */
     wm_draw_taskbar(sw);
+
+    /* 4b. Launcher menu — drawn above taskbar but below cursor. */
+    wm_draw_launcher_menu();
 
     /* 5. Mouse cursor — topmost element.
      *    Classic arrow pointer: 12 wide × 18 tall.

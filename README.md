@@ -45,9 +45,8 @@ Languages of choice:
 - [x] Desktop environment
 - [x] Build a terminal emulator
 - [x] GUI toolkit and syscall API for apps
-- [ ] Start button for the desktop which includes shutdown and a shortcut to our GUI apps (the terminal emulator for now)
+- [x] Launcher button on the task bar which includes option to shutdown and a shortcut to our GUI apps (the terminal emulator for now)
 - [ ] Basic desktop apps: calculator, text editor, drawing app
-- [ ] Port DOOM to ASOS
 - [ ] Will not do: PCI bus enumeration
 - [ ] Will not do: Network interface driver
 - [ ] Will not do: TCP/IP stack
