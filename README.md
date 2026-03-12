@@ -42,7 +42,8 @@ Languages of choice:
 - [x] PS/2 mouse Drivers
 - [x] Graphics framebuffer library
 - [x] Window manager and compositor
-- [ ] Desktop environment
+- [x] Desktop environment
+- [ ] Build a terminal emulator
 - [ ] GUI toolkit and syscall API for apps
 - [ ] Basic desktop apps: calculator, text editor, file manager, system settings, drawing app, a system monitor, terminal emulator, image viewer
 - [ ] PCI bus enumeration
