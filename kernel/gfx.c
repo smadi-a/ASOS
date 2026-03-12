@@ -471,6 +471,11 @@ void gfx_init(void *fb_addr, uint32_t width, uint32_t height,
     s_pitch     = pitch;
     s_pixel_fmt = pixel_format;
 
+    if (width == 0 || height == 0) {
+        s_backbuf = NULL;
+        return;
+    }
+
     /* Allocate back buffer: width * height * 4 bytes. */
     s_backbuf = (uint32_t *)kmalloc((size_t)width * height * 4U);
 
@@ -499,6 +504,11 @@ void gfx_init(void *fb_addr, uint32_t width, uint32_t height,
     serial_puts(s_backbuf ? "OK" : "FAIL");
     serial_putc('\n');
 }
+
+/* ── gfx_screen_width / gfx_screen_height ──────────────────────────────── */
+
+uint32_t gfx_screen_width(void)  { return s_width;  }
+uint32_t gfx_screen_height(void) { return s_height; }
 
 /* ── gfx_flush ─────────────────────────────────────────────────────────── */
 
@@ -579,7 +589,7 @@ void gfx_draw_rect(int x, int y, int w, int h, uint32_t color)
 void gfx_hline(int x, int y, int len, uint32_t color)
 {
     if (!s_backbuf || len <= 0) return;
-    if ((unsigned)y >= s_height) return;
+    if (y < 0 || (uint32_t)y >= s_height) return;
     if (x < 0) { len += x; x = 0; }
     if (len <= 0) return;
     if ((uint32_t)x >= s_width) return;
@@ -596,7 +606,7 @@ void gfx_hline(int x, int y, int len, uint32_t color)
 void gfx_vline(int x, int y, int len, uint32_t color)
 {
     if (!s_backbuf || len <= 0) return;
-    if ((unsigned)x >= s_width) return;
+    if (x < 0 || (uint32_t)x >= s_width) return;
     if (y < 0) { len += y; y = 0; }
     if (len <= 0) return;
     if ((uint32_t)y >= s_height) return;
@@ -629,7 +639,7 @@ void gfx_blit(int dst_x, int dst_y,
         const uint32_t *srow = src + (uint32_t)(sy + row) * (uint32_t)src_w + (uint32_t)sx;
         uint32_t       *drow = s_backbuf + (uint32_t)(dst_y + row) * s_width + (uint32_t)dst_x;
         for (int col = 0; col < dw; col++)
-            drow[col] = srow[col];
+            drow[col] = color_native(srow[col]);
     }
 }
 

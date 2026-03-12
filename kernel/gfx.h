@@ -38,6 +38,12 @@ void gfx_init(void *fb_addr, uint32_t width, uint32_t height,
  */
 void gfx_flush(void);
 
+/* ── Screen info ─────────────────────────────────────────────────────── */
+
+/* Return display width / height in pixels (0 if not initialised). */
+uint32_t gfx_screen_width(void);
+uint32_t gfx_screen_height(void);
+
 /* ── Drawing primitives ───────────────────────────────────────────────── */
 
 /* Fill the entire back buffer with color. */
@@ -59,10 +65,9 @@ void gfx_hline(int x, int y, int len, uint32_t color);
 void gfx_vline(int x, int y, int len, uint32_t color);
 
 /*
- * gfx_blit — Copy a src_w × src_h block of 32-bit pixels into the back
- * buffer at (dst_x, dst_y).  Source pixels are row-major, no padding
- * (stride = src_w * 4).  Colors in src must already be in native format
- * or ARGB — the blit copies them as-is (no per-pixel conversion).
+ * gfx_blit — Copy a src_w × src_h block of 32-bit ARGB pixels into the
+ * back buffer at (dst_x, dst_y).  Source pixels are row-major, no padding
+ * (stride = src_w * 4).  Each pixel is converted via color_native().
  * Clipped to screen bounds.
  */
 void gfx_blit(int dst_x, int dst_y,

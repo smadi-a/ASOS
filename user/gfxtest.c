@@ -11,19 +11,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <gfx.h>
-
-/* ── Colour constants (ARGB, alpha ignored) ──────────────────────────── */
-
-#define COL_BLACK    0x00000000U
-#define COL_WHITE    0x00FFFFFFU
-#define COL_RED      0x00CC2222U
-#define COL_GREEN    0x0022CC22U
-#define COL_BLUE     0x002244CCU
-#define COL_YELLOW   0x00CCCC00U
-#define COL_CYAN     0x0000CCCCU
-#define COL_GRAY     0x00444444U
-#define COL_LGRAY    0x00888888U
-#define COL_DKBLUE   0x00001040U
+#include <gfx_colors.h>
 
 int main(void)
 {

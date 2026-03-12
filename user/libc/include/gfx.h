@@ -49,6 +49,12 @@ int gfx_draw(const GfxCmd *cmd);
  */
 int gfx_flush_display(void);
 
+/*
+ * gfx_screen_info — Query the display dimensions.
+ * On success, *width and *height are filled in and 0 is returned.
+ */
+int gfx_screen_info(uint32_t *width, uint32_t *height);
+
 /* ── Convenience helpers ───────────────────────────────────────────────── */
 
 static inline int gfx_clear(uint32_t color)
