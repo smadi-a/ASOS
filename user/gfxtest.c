@@ -55,10 +55,10 @@ int main(void)
 
     /* 7. Text labels. */
     gfx_puts( 60,  60, "ASOS GFX TEST", COL_WHITE,  COL_DKBLUE);
-    gfx_puts( 60,  80, "Kernel back-buffer + 8x16 font",
+    gfx_puts( 60,  80, "Back-buffer + 8x16 font",
               COL_CYAN,   COL_DKBLUE);
-    gfx_puts(280,  60, "Filled rect",   COL_WHITE,  COL_RED);
-    gfx_puts(280,  80, "Draw rect",     COL_YELLOW, COL_RED);
+    gfx_puts(280,  60, "Filled rect",   COL_WHITE,  COL_DKBLUE);
+    gfx_puts(280,  80, "Draw rect",     COL_YELLOW, COL_DKBLUE);
 
     gfx_puts( 70, 250, "Press 'q' to quit.", COL_BLACK, COL_LGRAY);
 
