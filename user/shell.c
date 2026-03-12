@@ -44,6 +44,7 @@ static void cmd_help(void)
     printf("  end <pid>            Terminate a process\n");
     printf("  disk                 Show filesystem usage\n");
     printf("  help                 Show this help\n");
+    printf("  out                  Exit shell\n");
     printf("  halt                 Shut down the system\n");
     printf("\n");
     printf("Type any program name to run it (e.g., hello)\n");
@@ -471,7 +472,7 @@ static void process_command(char *cmd)
 
     if (strcmp(cmd, "help") == 0)         cmd_help();
     else if (strcmp(cmd, "halt") == 0)    { printf("System halting.\n"); exit(0); }
-    else if (strcmp(cmd, "out") == 0)     printf("Type 'halt' to shut down.\n");
+    else if (strcmp(cmd, "out") == 0)     { printf("Goodbye.\n"); exit(0); }
     else if (strcmp(cmd, "say") == 0)     cmd_say(args);
     else if (strcmp(cmd, "clean") == 0)   cmd_clean(args);
     else if (strcmp(cmd, "l") == 0)       cmd_l(args);

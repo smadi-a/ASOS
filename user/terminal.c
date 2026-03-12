@@ -412,7 +412,7 @@ static void cmd_help(void)
     term_puts("  end <pid>            Kill a process\n");
     term_puts("  disk                 Filesystem usage\n");
     term_puts("  help                 This help\n");
-    term_puts("  exit                 Exit terminal\n");
+    term_puts("  out                  Exit terminal\n");
     term_puts("\nType any program name to run it.\n");
 }
 
@@ -740,7 +740,7 @@ static void process_command(char *cmd)
     }
 
     if      (strcmp(cmd, "help") == 0)       cmd_help();
-    else if (strcmp(cmd, "exit") == 0)       exit(0);
+    else if (strcmp(cmd, "out") == 0)        exit(0);
     else if (strcmp(cmd, "clear") == 0 ||
              strcmp(cmd, "clean") == 0)      term_clear();
     else if (strcmp(cmd, "say") == 0 ||
