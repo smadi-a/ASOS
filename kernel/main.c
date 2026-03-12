@@ -446,55 +446,66 @@ static void kernel_main2(void)
     /* ── Ring-3 user processes ───────────────────────────────────────── */
     scheduler_init();
 
-    /* Load shell from disk. */
-    serial_puts("[INIT] Loading shell...\n");
+    /* Load the desktop (init process) from disk.
+     * Priority: DESKTOP.ELF → SHELL.ELF → in-kernel demo programs.
+     * DESKTOP.ELF is responsible for spawning SHELL.ELF itself. */
+    serial_puts("[INIT] Loading desktop...\n");
     {
+        bool loaded = false;
         vfs_file_t elf_file;
-        if (vfs_open("/SHELL.ELF", &elf_file) == 0) {
+
+        /* 1. Preferred: DESKTOP.ELF — full GUI desktop + spawns shell. */
+        if (vfs_open("/DESKTOP.ELF", &elf_file) == 0) {
             uint32_t fsz = vfs_size(&elf_file);
             void *elf_buf = kmalloc(fsz);
             uint32_t got = 0;
             if (vfs_read(&elf_file, elf_buf, fsz, &got) == 0 && got > 0) {
-                serial_puts("[INIT] Read ");
-                serial_put_dec(got);
-                serial_puts(" bytes of SHELL.ELF\n");
-
-                task_t *shell_task = task_create_from_elf("shell",
-                                                          elf_buf, got);
-                if (shell_task) {
-                    shell_task->parent_pid = 0;
-                    scheduler_add_task(shell_task);
-                    serial_puts("[INIT] Shell started (pid=");
-                    serial_put_dec(shell_task->id);
+                task_t *t = task_create_from_elf("desktop", elf_buf, got);
+                if (t) {
+                    t->parent_pid = 0;
+                    scheduler_add_task(t);
+                    serial_puts("[INIT] Desktop started (pid=");
+                    serial_put_dec(t->id);
                     serial_puts(")\n");
+                    loaded = true;
                 } else {
-                    serial_puts("[INIT] FATAL: Failed to create shell process\n");
+                    serial_puts("[INIT] WARN: Failed to create desktop process\n");
                 }
             } else {
-                serial_puts("[INIT] FATAL: Failed to read SHELL.ELF\n");
+                serial_puts("[INIT] WARN: Failed to read DESKTOP.ELF\n");
             }
             kfree(elf_buf);
             vfs_close(&elf_file);
-        } else {
-            serial_puts("[INIT] SHELL.ELF not found, falling back to HELLO.ELF\n");
-            vfs_file_t hello_file;
-            if (vfs_open("/HELLO.ELF", &hello_file) == 0) {
-                uint32_t fsz = vfs_size(&hello_file);
-                void *elf_buf = kmalloc(fsz);
-                uint32_t got = 0;
-                if (vfs_read(&hello_file, elf_buf, fsz, &got) == 0 && got > 0) {
-                    task_t *t = task_create_from_elf("hello.elf", elf_buf, got);
-                    if (t) scheduler_add_task(t);
+        }
+
+        /* 2. Fallback: SHELL.ELF — text-mode shell without desktop. */
+        if (!loaded && vfs_open("/SHELL.ELF", &elf_file) == 0) {
+            serial_puts("[INIT] DESKTOP.ELF not found, falling back to SHELL.ELF\n");
+            uint32_t fsz = vfs_size(&elf_file);
+            void *elf_buf = kmalloc(fsz);
+            uint32_t got = 0;
+            if (vfs_read(&elf_file, elf_buf, fsz, &got) == 0 && got > 0) {
+                task_t *t = task_create_from_elf("shell", elf_buf, got);
+                if (t) {
+                    t->parent_pid = 0;
+                    scheduler_add_task(t);
+                    serial_puts("[INIT] Shell started (pid=");
+                    serial_put_dec(t->id);
+                    serial_puts(")\n");
+                    loaded = true;
                 }
-                kfree(elf_buf);
-                vfs_close(&hello_file);
-            } else {
-                serial_puts("[INIT] No user programs found, running in-kernel\n");
-                task_t *u1 = task_create_user("hello", user_program_hello, 4096);
-                task_t *u2 = task_create_user("counter", user_program_counter, 4096);
-                scheduler_add_task(u1);
-                scheduler_add_task(u2);
             }
+            kfree(elf_buf);
+            vfs_close(&elf_file);
+        }
+
+        /* 3. Last resort: in-kernel user programs (no disk required). */
+        if (!loaded) {
+            serial_puts("[INIT] No user programs on disk, running in-kernel demo\n");
+            task_t *u1 = task_create_user("hello",   user_program_hello,   4096);
+            task_t *u2 = task_create_user("counter", user_program_counter, 4096);
+            scheduler_add_task(u1);
+            scheduler_add_task(u2);
         }
     }
 
