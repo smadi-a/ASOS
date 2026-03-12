@@ -125,7 +125,7 @@ void wm_init(void)
 
 /* ── wm_create ─────────────────────────────────────────────────────────── */
 
-int wm_create(const char *title, int x, int y, int w, int h)
+int wm_create(const char *title, int x, int y, int w, int h, uint32_t owner_pid)
 {
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
     /* Slots 1–15 are available for user windows; slot 0 = root. */
@@ -161,14 +161,15 @@ int wm_create(const char *title, int x, int y, int w, int h)
         for (uint32_t i = 0; i < buf_bytes; i++) bp[i] = 0;
     }
 
-    win->id      = (uint32_t)slot;
-    win->x       = x;
-    win->y       = y;
-    win->w       = w;
-    win->h       = h;
-    win->flags   = 0;
-    win->focused = true;
-    win->in_use  = true;
+    win->id        = (uint32_t)slot;
+    win->x         = x;
+    win->y         = y;
+    win->w         = w;
+    win->h         = h;
+    win->flags     = 0;
+    win->focused   = true;
+    win->in_use    = true;
+    win->owner_pid = owner_pid;
     wm_str_copy(win->title, title, (int)sizeof(win->title));
 
     /* Unfocus all existing windows when a new one is created on top. */
@@ -192,6 +193,11 @@ void wm_destroy(int win_id)
     window_t *w = g_windows[win_id];
     if (!w || !w->in_use) return;
 
+    /* Clear drag state if this window is being dragged — prevents
+     * use-after-free on the next mouse move. */
+    if (s_dragging == w)
+        s_dragging = NULL;
+
     if (w->buffer) {
         kfree(w->buffer);
         w->buffer = NULL;
@@ -206,6 +212,17 @@ void wm_destroy(int win_id)
             g_windows[i]->focused = true;
             break;
         }
+    }
+}
+
+/* ── wm_destroy_by_owner ───────────────────────────────────────────────── */
+
+void wm_destroy_by_owner(uint32_t pid)
+{
+    for (int i = 1; i < MAX_WINDOWS; i++) {
+        window_t *w = g_windows[i];
+        if (w && w->in_use && w->owner_pid == pid)
+            wm_destroy(i);
     }
 }
 
