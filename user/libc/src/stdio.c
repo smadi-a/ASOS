@@ -217,6 +217,13 @@ char *gets_s(char *buf, size_t size)
             break;
         }
 
+        if (c == 0x03) {
+            /* Ctrl+C — print ^C and abort input. */
+            write(1, "^C\n", 3);
+            buf[0] = '\0';
+            return (void *)0;
+        }
+
         if (c == '\n' || c == '\r') {
             putchar('\n');
             break;

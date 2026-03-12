@@ -46,6 +46,9 @@ typedef struct task {
 
     char           cwd[256];           /* Current working directory        */
 
+    volatile uint8_t pending_signal;    /* Non-zero = signal pending         */
+    int            is_foreground;       /* 1 if this is the foreground task  */
+
     /* Per-process file descriptor table (fds 3..10, 0-2 reserved). */
 #define MAX_OPEN_FILES 8
     struct {

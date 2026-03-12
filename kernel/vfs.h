@@ -112,6 +112,12 @@ int vfs_rename(const char *old_path, const char *new_path);
 int vfs_copy(const char *src_path, const char *dst_path);
 
 /*
+ * Remove an empty directory.  path must be absolute.
+ * Returns 0 on success, -1 on error (not empty, not found, not a dir).
+ */
+int vfs_rmdir(const char *path);
+
+/*
  * Retrieve filesystem usage statistics.  Returns 0 on success, -1 on error.
  */
 int vfs_get_stats(fs_stat_t *stat);

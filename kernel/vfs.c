@@ -248,6 +248,21 @@ int vfs_copy(const char *src_path, const char *dst_path)
     return 0;
 }
 
+int vfs_rmdir(const char *path)
+{
+    char upper[256];
+    strncpy(upper, path, 255);
+    upper[255] = '\0';
+    upper_path(upper, 256);
+
+    uint32_t parent_cluster;
+    char name_83[11];
+    if (fat32_resolve_dir(upper, &parent_cluster, name_83) != 0)
+        return -1;
+
+    return fat32_rmdir(parent_cluster, name_83);
+}
+
 int vfs_get_stats(fs_stat_t *stat)
 {
     return fat32_get_stats(stat);

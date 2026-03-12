@@ -178,6 +178,8 @@ task_t *task_create_kernel(const char *name, void (*entry_point)(void))
     t->kernel_rsp = (uint64_t)(uintptr_t)sp;
 
     strcpy(t->cwd, "/");
+    t->pending_signal = 0;
+    t->is_foreground = 0;
 
     serial_puts("[PROC] Created kernel thread: ");
     serial_puts(t->name);
@@ -265,6 +267,8 @@ task_t *task_create_user(const char *name, void (*entry_point)(void),
     t->kernel_rsp = (uint64_t)(uintptr_t)sp;
 
     strcpy(t->cwd, "/");
+    t->pending_signal = 0;
+    t->is_foreground = 0;
 
     serial_puts("[PROC] Created user process: ");
     serial_puts(t->name);
@@ -346,6 +350,8 @@ task_t *task_create_from_elf(const char *name,
     t->kernel_rsp = (uint64_t)(uintptr_t)sp;
 
     strcpy(t->cwd, "/");
+    t->pending_signal = 0;
+    t->is_foreground = 0;
 
     serial_puts("[PROC] Created process from ELF: ");
     serial_puts(t->name);

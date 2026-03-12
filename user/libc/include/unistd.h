@@ -73,6 +73,7 @@ int     fdelete(const char *path);
 
 /* Directory/file management. */
 int     mkdir(const char *path);
+int     rmdir(const char *path);
 int     rename(const char *oldpath, const char *newpath);
 int     copy(const char *src, const char *dst);
 
