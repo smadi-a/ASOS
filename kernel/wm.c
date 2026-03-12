@@ -17,7 +17,10 @@
 #include "gfx.h"
 #include "heap.h"
 #include "mouse.h"
+#include "keyboard.h"
 #include "pit.h"
+#include "scheduler.h"
+#include "process.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -239,6 +242,32 @@ uint32_t wm_get_focused_owner(void)
     return 0;   /* no focused user window */
 }
 
+/* ── Event queue helpers ────────────────────────────────────────────────── */
+
+/*
+ * Push an event into a task's ring buffer.
+ * Caller must ensure interrupts are disabled.
+ */
+static void task_push_event(task_t *task, const event_t *evt)
+{
+    uint8_t next = (task->event_tail + 1) & (EVENT_QUEUE_SIZE - 1);
+    if (next == task->event_head)
+        return;   /* Queue full — drop event */
+    task->event_queue[task->event_tail] = *evt;
+    task->event_tail = next;
+}
+
+void wm_push_event_to_focused(const event_t *evt)
+{
+    uint32_t owner = wm_get_focused_owner();
+    if (owner == 0) return;
+
+    task_t *task = scheduler_find_task_by_pid((uint64_t)owner);
+    if (!task) return;
+
+    task_push_event(task, evt);
+}
+
 /* ── wm_handle_mouse ───────────────────────────────────────────────────── */
 
 void wm_handle_mouse(int x, int y, bool clicked)
@@ -315,6 +344,32 @@ void wm_handle_mouse(int x, int y, bool clicked)
         }
     } else {
         s_dragging = NULL;
+    }
+
+    /* ── Push mouse events to the focused window's owner task ────── */
+    {
+        event_t evt;
+        evt._pad = 0;
+        evt.x = (int16_t)x;
+        evt.y = (int16_t)y;
+
+        /* Button transitions. */
+        if (clicked && !s_btn_prev) {
+            evt.type = EVENT_MOUSE_DOWN;
+            evt.code = 1;   /* left button */
+            wm_push_event_to_focused(&evt);
+        } else if (!clicked && s_btn_prev) {
+            evt.type = EVENT_MOUSE_UP;
+            evt.code = 1;
+            wm_push_event_to_focused(&evt);
+        }
+
+        /* Movement. */
+        if (dx || dy) {
+            evt.type = EVENT_MOUSE_MOVE;
+            evt.code = clicked ? 1 : 0;
+            wm_push_event_to_focused(&evt);
+        }
     }
 
     s_btn_prev = clicked;
@@ -426,6 +481,20 @@ void wm_compose(void)
 
             bool left_btn = (evt.buttons & 1) != 0;
             wm_handle_mouse(g_mouse_x, g_mouse_y, left_btn);
+        }
+    }
+
+    /* 1b. Drain keyboard buffer and push key events to focused owner. */
+    if (g_window_count > 1) {
+        char kc;
+        while (keyboard_read_char(&kc)) {
+            event_t kevt;
+            kevt.type = EVENT_KEY_PRESS;
+            kevt._pad = 0;
+            kevt.x    = 0;
+            kevt.y    = 0;
+            kevt.code = (uint16_t)(uint8_t)kc;
+            wm_push_event_to_focused(&kevt);
         }
     }
 

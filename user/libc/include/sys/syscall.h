@@ -41,6 +41,7 @@
 #define SYS_WIN_CREATE 31
 #define SYS_WIN_UPDATE 32
 #define SYS_KEY_POLL   33
+#define SYS_GET_EVENT  34
 
 static inline int64_t __syscall0(uint64_t num)
 {
