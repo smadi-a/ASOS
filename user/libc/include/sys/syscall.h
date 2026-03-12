@@ -37,6 +37,7 @@
 #define SYS_RMDIR    27
 #define SYS_GFX_DRAW  28
 #define SYS_GFX_FLUSH 29
+#define SYS_GFX_INFO  30
 
 static inline int64_t __syscall0(uint64_t num)
 {

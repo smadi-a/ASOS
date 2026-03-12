@@ -1094,24 +1094,27 @@ static int64_t sys_gfx_draw(uint64_t cmd_addr)
         if (cmd.ptr == 0 || cmd.ptr_len == 0) return -1;
         if (cmd.ptr_len > 4096) return -1;  /* max string length */
 
-        /* Copy string to kernel buffer. */
-        char kstr[4096];
+        /* Copy string to kernel heap buffer (avoid 4 KB on the stack). */
+        char *kstr = (char *)kmalloc(cmd.ptr_len + 1);
+        if (!kstr) return -1;
         const char *ustr = (const char *)(uintptr_t)cmd.ptr;
         uint32_t i;
-        for (i = 0; i < cmd.ptr_len && i < sizeof(kstr) - 1; i++)
+        for (i = 0; i < cmd.ptr_len; i++)
             kstr[i] = ustr[i];
         kstr[i] = '\0';
 
         uint32_t bg = (uint32_t)cmd.w;   /* w field repurposed as bg color */
         gfx_draw_string(cmd.x, cmd.y, kstr, cmd.color, bg);
+        kfree(kstr);
         break;
     }
 
     case GFX_OP_BLIT: {
         if (cmd.ptr == 0 || cmd.ptr_len == 0) return -1;
         if (cmd.w <= 0 || cmd.h <= 0) return -1;
-        uint32_t expected = (uint32_t)cmd.w * (uint32_t)cmd.h * 4U;
-        if (cmd.ptr_len != expected) return -1;
+        uint64_t expected = (uint64_t)(uint32_t)cmd.w * (uint32_t)cmd.h * 4U;
+        if (expected > GFX_MAX_PTR_LEN) return -1;
+        if (cmd.ptr_len != (uint32_t)expected) return -1;
 
         /* Copy pixel data to kernel buffer. */
         uint32_t *kpix = (uint32_t *)kmalloc(cmd.ptr_len);
@@ -1153,6 +1156,24 @@ static int64_t sys_gfx_flush(void)
     return 0;
 }
 
+/*
+ * sys_gfx_info — Write screen width and height to a user-space buffer.
+ *
+ * arg1 = user VA of uint32_t[2];  out[0] = width, out[1] = height.
+ */
+static int64_t sys_gfx_info(uint64_t buf_addr)
+{
+#define USER_ADDR_MAX_GI  0x0000800000000000ULL
+    if (buf_addr >= USER_ADDR_MAX_GI) return -1;
+    if (buf_addr + 8 > USER_ADDR_MAX_GI) return -1;
+
+    uint32_t *out = (uint32_t *)(uintptr_t)buf_addr;
+    out[0] = gfx_screen_width();
+    out[1] = gfx_screen_height();
+    return 0;
+#undef USER_ADDR_MAX_GI
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -1192,6 +1213,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_RMDIR:     return sys_rmdir(arg1);
     case SYS_GFX_DRAW:  return sys_gfx_draw(arg1);
     case SYS_GFX_FLUSH: return sys_gfx_flush();
+    case SYS_GFX_INFO:  return sys_gfx_info(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);
