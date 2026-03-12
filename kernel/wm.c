@@ -64,7 +64,7 @@
 #define LAUNCHER_BTN_W   60              /* "ASOS" button width           */
 #define LAUNCHER_MENU_W 140              /* Drop-down menu width          */
 #define LAUNCHER_ITEM_H  24              /* Menu item height              */
-#define LAUNCHER_NUM_ITEMS  2            /* Terminal, Shutdown            */
+#define LAUNCHER_NUM_ITEMS  3            /* Terminal, Calculator, Shutdown */
 
 /* ── Global state ──────────────────────────────────────────────────────── */
 
@@ -84,6 +84,7 @@ static bool      s_launcher_open = false;
 
 /* Forward declarations for launcher actions. */
 static void launcher_spawn_terminal(void);
+static void launcher_spawn_calculator(void);
 static void launcher_shutdown(void);
 
 /* ── Internal helpers ──────────────────────────────────────────────────── */
@@ -317,7 +318,8 @@ void wm_handle_mouse(int x, int y, bool clicked)
                         if (y >= item_y && y < item_y + LAUNCHER_ITEM_H) {
                             s_launcher_open = false;
                             if (mi == 0) launcher_spawn_terminal();
-                            if (mi == 1) launcher_shutdown();
+                            if (mi == 1) launcher_spawn_calculator();
+                            if (mi == 2) launcher_shutdown();
                             goto mouse_done;
                         }
                     }
@@ -420,8 +422,26 @@ void wm_handle_mouse(int x, int y, bool clicked)
     {
         event_t evt;
         evt._pad = 0;
-        evt.x = (int16_t)x;
-        evt.y = (int16_t)y;
+
+        /* Convert absolute screen coordinates to client-area-relative
+         * coordinates so user-space widget hit-testing works correctly. */
+        int16_t rel_x = (int16_t)x;
+        int16_t rel_y = (int16_t)y;
+        {
+            uint32_t owner = wm_get_focused_owner();
+            if (owner != 0) {
+                for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
+                    window_t *fw = g_windows[i];
+                    if (fw && fw->in_use && fw->focused) {
+                        rel_x = (int16_t)(x - fw->x);
+                        rel_y = (int16_t)(y - fw->y - WM_TITLEBAR_H);
+                        break;
+                    }
+                }
+            }
+        }
+        evt.x = rel_x;
+        evt.y = rel_y;
 
         /* Button transitions. */
         if (clicked && !s_btn_prev) {
@@ -512,6 +532,47 @@ static void launcher_spawn_terminal(void)
 }
 
 /*
+ * Spawn the calculator application (CALC.ELF).
+ */
+static void launcher_spawn_calculator(void)
+{
+    uint64_t kernel_pml4 = vmm_get_kernel_pml4();
+    vmm_switch_address_space(kernel_pml4);
+
+    vfs_file_t elf_file;
+    if (vfs_open("/CALC.ELF", &elf_file) != 0) {
+        serial_puts("[LAUNCHER] CALC.ELF not found\n");
+        return;
+    }
+
+    uint32_t fsz = vfs_size(&elf_file);
+    void *elf_buf = kmalloc(fsz);
+    uint32_t got = 0;
+    if (vfs_read(&elf_file, elf_buf, fsz, &got) != 0 || got == 0) {
+        kfree(elf_buf);
+        vfs_close(&elf_file);
+        serial_puts("[LAUNCHER] Failed to read CALC.ELF\n");
+        return;
+    }
+    vfs_close(&elf_file);
+
+    task_t *child = task_create_from_elf("calc", elf_buf, got);
+    kfree(elf_buf);
+
+    if (!child) {
+        serial_puts("[LAUNCHER] Failed to create calculator process\n");
+        return;
+    }
+
+    child->parent_pid = 0;
+    strncpy(child->cwd, "/", sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
+    scheduler_add_task(child);
+
+    serial_puts("[LAUNCHER] Spawned calculator\n");
+}
+
+/*
  * Power off the machine.  Uses the QEMU/Bochs debug-exit port first,
  * then tries ACPI PM1a_CNT (works on QEMU + VirtualBox with ACPI).
  * As a last resort, triple-fault to force a reset.
@@ -539,7 +600,7 @@ static void wm_draw_launcher_menu(void)
                   LAUNCHER_MENU_W - 2, menu_h - 2, COL_LAUNCHER_MENU);
 
     /* Menu items */
-    static const char *items[LAUNCHER_NUM_ITEMS] = { "Terminal", "Shutdown" };
+    static const char *items[LAUNCHER_NUM_ITEMS] = { "Terminal", "Calculator", "Shutdown" };
     for (int i = 0; i < LAUNCHER_NUM_ITEMS; i++) {
         int item_y = menu_y + 1 + i * LAUNCHER_ITEM_H;
 
