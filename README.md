@@ -45,17 +45,19 @@ Languages of choice:
 - [x] Desktop environment
 - [x] Build a terminal emulator
 - [ ] GUI toolkit and syscall API for apps
-- [ ] Basic desktop apps: calculator, text editor, file manager, system settings, drawing app, a system monitor, terminal emulator, image viewer
-- [ ] PCI bus enumeration
-- [ ] Network interface driver
-- [ ] TCP/IP stack
-- [ ] Add more advanced shell commands (grep/find, top/proc, chmod/perm, ping/test, ifconfig/ip)
-- [ ] DNS resolver and sockets API
-- [ ] Enhancement: Swap bitmap allocator with a buddy allocator
-- [ ] Enhancement: Write an AHCI driver that implements the same block device interface and swap it in
-- [ ] Enhancement: Drop in a slab allocator for better performance
-- [ ] Enhancement: Add APIC support and disable the PIC at that point
-- [ ] Enhancement: Refactor towards a microkernel
+- [ ] Start button for the desktop which includes shutdown and a shortcut to our GUI apps (the terminal emulator)
+- [ ] Basic desktop apps: calculator, text editor, drawing app
+- [ ] Port DOOM to ASOS
+- [ ] Will not do: PCI bus enumeration
+- [ ] Will not do: Network interface driver
+- [ ] Will not do: TCP/IP stack
+- [ ] Will not do: Add more advanced shell commands (grep/find, top/proc, chmod/perm, ping/test, ifconfig/ip)
+- [ ] Will not do: DNS resolver and sockets API
+- [ ] Will not do: Enhancement: Swap bitmap allocator with a buddy allocator
+- [ ] Will not do: Enhancement: Write an AHCI driver that implements the same block device interface and swap it in
+- [ ] Will not do: Enhancement: Drop in a slab allocator for better performance
+- [ ] Will not do: Enhancement: Add APIC support and disable the PIC at that point
+- [ ] Will not do: Enhancement: Refactor towards a microkernel
 
 ## Local Dev
 - `make` to build everything + compile the vdi disk files (boot disk + data disk)
