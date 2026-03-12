@@ -35,9 +35,12 @@
 #define SYS_RENAME   25
 #define SYS_COPY     26
 #define SYS_RMDIR    27
-#define SYS_GFX_DRAW  28
-#define SYS_GFX_FLUSH 29
-#define SYS_GFX_INFO  30
+#define SYS_GFX_DRAW   28
+#define SYS_GFX_FLUSH  29
+#define SYS_GFX_INFO   30
+#define SYS_WIN_CREATE 31
+#define SYS_WIN_UPDATE 32
+#define SYS_KEY_POLL   33
 
 static inline int64_t __syscall0(uint64_t num)
 {
@@ -76,6 +79,27 @@ static inline int64_t __syscall3(uint64_t num, uint64_t a1, uint64_t a2,
     __asm__ volatile ("syscall"
         : "=a"(ret)
         : "a"(num), "D"(a1), "S"(a2), "d"(a3)
+        : "rcx", "r11", "memory");
+    return ret;
+}
+
+/*
+ * __syscall5 — invoke a syscall with five arguments.
+ *
+ * x86-64 syscall convention:
+ *   rax = num, rdi = a1, rsi = a2, rdx = a3, r10 = a4, r8 = a5
+ * (rcx is clobbered by the syscall instruction, so r10 replaces rcx.)
+ */
+static inline int64_t __syscall5(uint64_t num,
+                                  uint64_t a1, uint64_t a2, uint64_t a3,
+                                  uint64_t a4, uint64_t a5)
+{
+    int64_t ret;
+    register uint64_t _r10 __asm__("r10") = a4;
+    register uint64_t _r8  __asm__("r8")  = a5;
+    __asm__ volatile ("syscall"
+        : "=a"(ret)
+        : "a"(num), "D"(a1), "S"(a2), "d"(a3), "r"(_r10), "r"(_r8)
         : "rcx", "r11", "memory");
     return ret;
 }

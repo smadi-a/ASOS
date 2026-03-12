@@ -59,6 +59,7 @@
 #include "user_syscall.h"
 #include "elf.h"
 #include "gfx.h"
+#include "wm.h"
 
 #define ASOS_VERSION "ASOS v0.1.0"
 
@@ -179,6 +180,9 @@ static void kernel_main2(void)
              g_boot_fb.pitch, 32,
              (uint32_t)g_boot_fb.format);
     serial_puts("[OK] GFX\n");
+
+    wm_init();
+    serial_puts("[OK] WM\n");
 
     /* ── ATA + GPT + FAT32 ───────────────────────────────────────────── */
     ata_init();
@@ -499,19 +503,8 @@ static void kernel_main2(void)
 
     /* ── Idle loop — the scheduler runs everything else ───────────── */
     for (;;) {
-        /* Drain mouse events and print to serial for testing. */
-        mouse_event_t mevt;
-        while (mouse_read_event(&mevt)) {
-            serial_puts("[MOUSE] dx=");
-            if (mevt.dx < 0) { serial_putc('-'); serial_put_dec((uint64_t)(-(int64_t)mevt.dx)); }
-            else              serial_put_dec((uint64_t)mevt.dx);
-            serial_puts(" dy=");
-            if (mevt.dy < 0) { serial_putc('-'); serial_put_dec((uint64_t)(-(int64_t)mevt.dy)); }
-            else              serial_put_dec((uint64_t)mevt.dy);
-            serial_puts(" btn=");
-            serial_put_dec(mevt.buttons);
-            serial_putc('\n');
-        }
+        /* Mouse events are consumed by wm_compose() on each gfx_flush.
+         * The idle task just halts until the next interrupt. */
         __asm__ volatile ("hlt" ::: "memory");
     }
 }
