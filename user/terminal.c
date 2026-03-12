@@ -64,6 +64,22 @@ static inline long key_poll(void)
     return __syscall0(SYS_KEY_POLL);
 }
 
+/* Event types (from shared/event.h). */
+#define EVENT_WIN_CLOSE  6
+
+typedef struct {
+    uint8_t  type;
+    uint8_t  _pad;
+    int16_t  x;
+    int16_t  y;
+    uint16_t code;
+} term_event_t;
+
+static inline long get_event(term_event_t *evt)
+{
+    return __syscall1(SYS_GET_EVENT, (uint64_t)(uintptr_t)evt);
+}
+
 /* ── Embedded 8×16 VGA bitmap font ─────────────────────────────────────── *
  *
  * 128 glyphs × 16 bytes each.  Printable ASCII 0x20–0x7E populated;
@@ -820,6 +836,16 @@ int main(void)
     /* ── Event loop ─────────────────────────────────────────────────────── */
 
     for (;;) {
+        /* Drain any pending WM events (mouse move, etc.) so the event
+         * queue does not fill up.  We do NOT act on WIN_CLOSE here —
+         * the terminal's lifetime is managed by the 'out' command or
+         * by killing the process externally. */
+        {
+            term_event_t evt;
+            while (get_event(&evt) == 0)
+                ;   /* discard */
+        }
+
         long k = key_poll();
 
         if (k >= 0) {
