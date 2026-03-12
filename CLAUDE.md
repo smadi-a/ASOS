@@ -24,10 +24,12 @@ kernel/                   Monolithic kernel (C + NASM)
   *.c / *.h               One subsystem per file pair (see Subsystems below)
   *.asm                   NASM assembly (GDT flush, ISR stubs, context switch, syscall entry)
 shared/boot_info.h        BootInfo struct shared between bootloader and kernel
+shared/gfx.h              GfxCmd struct + GFX_OP_* constants (shared kernel/user)
 linker.ld                 Kernel linker script (VMA 0xFFFFFFFF80100000, LMA 0x100000)
 user/                     Ring-3 user programs
   libc/                   libasos.a — freestanding C runtime (printf, malloc, string, etc.)
   shell.c, hello.c, …     User programs linked against libasos.a
+  gfxtest.c, loop.c       Additional user programs
   user.ld                 User linker script (base 0x400000)
   start.asm               _start: zero BSS, align stack, call main, exit
 build/                    All build outputs (gitignored)
@@ -69,7 +71,7 @@ section .note.GNU-stack noalloc noexec nowrite progbits
 |--------|----------------|-------|
 | Identity map | 0x0 – 0xFFFFFFFF | 2 MB pages; first 2 MB is null-guard (unmapped) |
 | Kernel text/data | 0xFFFFFFFF80100000 | VMA; LMA = 0x100000 |
-| Kernel heap | 0xFFFFFFFF90000000 | 1 MB free-list allocator |
+| Kernel heap | 0xFFFFFFFF90000000 | 16 MB free-list allocator |
 | User code | 0x400000 | ELF PT_LOAD segments |
 | User stack | 0x7FFFFFF00000 | 16 KB, grows down |
 
@@ -86,7 +88,7 @@ Bitmap frame allocator. 1 M bits (128 KB BSS), 0 = free, 1 = used. All bits star
 
 ### Heap (`heap.c`)
 
-Free-list `kmalloc`/`kfree` over 1 MB at `0xFFFFFFFF90000000`.
+Free-list `kmalloc`/`kfree` over 16 MB (4096 frames) at `0xFFFFFFFF90000000`. Size was increased from 1 MB to accommodate the GFX back buffer (~3 MB at 1024×768×4 bytes).
 
 ### GDT / TSS (`gdt.c`, `tss.c`)
 
@@ -117,7 +119,7 @@ Vectors with error codes: 8, 10, 11, 12, 13, 14, 17, 21, 29, 30.
 
 ### Mouse (`mouse.c`)
 
-PS/2 mouse driver. Initialized after keyboard.
+PS/2 mouse driver. Handles standard 3-byte PS/2 packets. Mouse events (dx, dy, buttons) stored in a ring buffer via IRQ 12. Initialized after keyboard. API: `mouse_init()`, `mouse_read_event(mouse_event_t*)`, `mouse_has_event()`.
 
 ### ATA / GPT / FAT32 / VFS
 
@@ -144,7 +146,46 @@ Fast path via SYSCALL/SYSRET (STAR/LSTAR/FMASK MSRs).
 - `syscall_entry.asm` saves **all** caller-saved registers (rdi/rsi/rdx/r8/r9/r10) before calling C handler. This is required because GCC's inline `syscall` clobber list only declares rcx/r11/memory.
 - `g_syscall_rsp0` global mirrors TSS RSP0 for asm access.
 
-Key syscalls: `read(0)`, `write(1)`, `exit(2)`, `getpid(3)`, `yield(4)`, `sbrk(5)`, `waitpid(6)`, `spawn(7)`, `readdir(8)`, `mkdir(24)`, `rename(25)`, `copy(26)`.
+Key syscalls:
+
+| # | Name | Description |
+|---|------|-------------|
+| 0 | `read` | Read from stdin (keyboard) |
+| 1 | `write` | Write to stdout (serial) |
+| 2 | `exit` | Terminate process |
+| 3 | `getpid` | Get current PID |
+| 4 | `yield` | Yield CPU to scheduler |
+| 5 | `sbrk` | Grow user heap |
+| 6 | `waitpid` | Wait for child process |
+| 7 | `spawn` | Spawn new ELF process |
+| 8 | `readdir` | List directory entries |
+| 9 | `pidof` | Find PID by name |
+| 10 | `kill` | Kill process by PID |
+| 11 | `proclist` | List all processes |
+| 12 | `getcwd` | Get current working directory |
+| 13 | `chdir` | Change working directory |
+| 14 | `fsstat` | Filesystem statistics |
+| 15–20 | `fopen/fread/fclose/fsize/fseek/ftell` | File descriptor I/O |
+| 21–23 | `fwrite/fcreate/fdelete` | File write/create/delete |
+| 24 | `mkdir` | Create directory |
+| 25 | `rename` | Rename file/directory |
+| 26 | `copy` | Copy file |
+| 27 | `rmdir` | Remove directory |
+| 28 | `gfx_draw` | Submit GfxCmd to back buffer |
+| 29 | `gfx_flush` | Blit back buffer to framebuffer |
+| 30 | `gfx_info` | Query display dimensions (w, h) |
+
+### GFX Library (`gfx.c`, `gfx.h`, `shared/gfx.h`)
+
+Double-buffered 2D graphics library. A back buffer is allocated via `kmalloc` at init time; drawing operations target the back buffer; `gfx_flush` blits row-by-row to the GOP linear framebuffer (handles pitch ≠ width×4).
+
+- **`shared/gfx.h`**: `GfxCmd` struct + `GFX_OP_*` constants shared between kernel and user space.
+- **Operations**: `GFX_OP_FILL_RECT`, `GFX_OP_DRAW_RECT`, `GFX_OP_PUT_PIXEL`, `GFX_OP_HLINE` (length in `w`), `GFX_OP_VLINE` (length in `h`), `GFX_OP_DRAW_STRING` (`w` = bg_color), `GFX_OP_CLEAR`.
+- **Font**: 8×16 VGA bitmap font.
+- **Color**: stored as BGRA; RGB input swaps R↔B at draw time if framebuffer uses BGR layout.
+- **Syscall flow**: user calls `gfx_draw(cmd)` → `SYS_GFX_DRAW(28)` copies cmd to kernel and renders into back buffer. `gfx_flush()` → `SYS_GFX_FLUSH(29)` copies back buffer to framebuffer (requires kernel CR3 for identity-mapped framebuffer access). `gfx_info(w,h)` → `SYS_GFX_INFO(30)` returns display dimensions.
+- **User pointer validation**: ptr < 0x7FFFFFFFFFFF and size ≤ 4 MB checked before kernel dereference.
+- No CR3 switch needed for `sys_gfx_draw` (kernel heap accessible with any CR3); CR3 switch required in `sys_gfx_flush` only.
 
 ### ELF Loader (`elf.c`)
 
@@ -157,7 +198,8 @@ Validates ELF64 header, maps PT_LOAD segments into per-process page tables via i
 Freestanding static library. Headers in `user/libc/include/`. Key modules:
 - `stdio`: `printf`/`vsnprintf` (width, zero-pad, %d/%u/%x/%p/%s/%c/%%/`%l`), `getchar`, `gets_s`.
 - `stdlib`: `malloc`/`free` (free-list, 16-byte aligned, split+coalesce), `exit`.
-- `string`, `ctype`, `unistd` (spawn, waitpid, read, write), `errno`.
+- `string`, `ctype`, `unistd` (spawn, waitpid, read, write, mkdir, rename, copy), `errno`.
+- `gfx`: `gfx_draw(GfxCmd*)` → `SYS_GFX_DRAW`; `gfx_flush_display()` → `SYS_GFX_FLUSH`; inline helpers in `gfx.h` (gfx_clear, gfx_fill_rect, gfx_draw_rect, gfx_put_pixel, gfx_hline, gfx_vline, gfx_puts). Color constants in `gfx_colors.h`.
 - `malloc` backed by `sbrk` syscall; heap grows from top of highest ELF PT_LOAD segment up to user stack.
 
 ### User programs
@@ -165,6 +207,14 @@ Freestanding static library. Headers in `user/libc/include/`. Key modules:
 All linked at 0x400000 with `user.ld`. Start via `user/libc/start.asm` (_start: zero BSS, align stack, call main, sys_exit).
 
 String literals work in ELF programs (`.rodata` is mapped). String literals do **not** work in in-kernel user programs (M7A style) — use stack-allocated char arrays there.
+
+### User Programs
+
+- `hello.c` — Hello world demo
+- `echo.c` — Echo arguments to stdout
+- `cat.c` — Print file contents
+- `gfxtest.c` — GFX demo (draws shapes + text, runs as `GFXTEST.ELF`)
+- `loop.c` — Repeatedly prints a string (scheduler stress test)
 
 ### Shell (`user/shell.c`)
 
@@ -180,7 +230,7 @@ External programs: shell uppercases the name and appends `.ELF` if no extension,
 
 3. **User helper functions**: Must be `__attribute__((always_inline))` if defined in in-kernel user programs. Code is copied to 0x400000; relative calls would jump to wrong addresses.
 
-4. **Kernel heap size**: 1 MB (256 frames at `0xFFFFFFFF90000000`). Increased from 256 KB to support multiple process spawning.
+4. **Kernel heap size**: 16 MB (4096 frames at `0xFFFFFFFF90000000`). Increased from 256 KB → 1 MB (for multiple processes) → 16 MB (for GFX back buffer at ~3 MB for 1024×768).
 
 5. **Identity map gap**: First 2 MB is unmapped (null guard). PMM never allocates below frame 512 (2 MB). `vmm_init` skips the first 2 MB when building the identity map.
 
@@ -194,7 +244,7 @@ External programs: shell uppercases the name and appends `.ELF` if no extension,
 
 ## Next Milestones
 
-- [ ] Graphics framebuffer library
+- [x] Graphics framebuffer library
 - [ ] Window manager and compositor
 - [ ] Desktop environment + GUI toolkit
 - [ ] PCI bus enumeration
