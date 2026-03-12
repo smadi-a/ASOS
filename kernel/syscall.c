@@ -209,6 +209,9 @@ static void sys_exit(int status)
     cur->exit_status = status;
     cur->is_foreground = 0;
 
+    /* Destroy any WM windows owned by this process. */
+    wm_destroy_by_owner((uint32_t)cur->id);
+
     serial_puts("[SYSCALL] Task ");
     sc_put_dec(cur->id);
     serial_puts(" (");
@@ -506,6 +509,9 @@ static int64_t sys_kill(uint64_t target_pid)
     task_t *target = scheduler_find_task_by_pid(target_pid);
     if (!target) return -1;
     if (target->state == TASK_DEAD) return -1;
+
+    /* Destroy any WM windows owned by the killed process. */
+    wm_destroy_by_owner((uint32_t)target->id);
 
     /* TODO: proper cleanup — close open fds, free user pages/PTs. */
     target->exit_status = -1;
@@ -1196,10 +1202,12 @@ static int64_t sys_win_create(uint64_t title_addr, uint64_t x_u, uint64_t y_u,
     }
     title[63] = '\0';
 
+    task_t *cur = scheduler_get_current();
     return (int64_t)wm_create(title,
                               (int)(int64_t)x_u,
                               (int)(int64_t)y_u,
-                              w, h);
+                              w, h,
+                              (uint32_t)cur->id);
 #undef WIN_USER_MAX
 }
 

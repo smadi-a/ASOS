@@ -36,6 +36,7 @@ typedef struct {
     uint32_t  flags;   /* WM_FLAG_* bitmask                                  */
     bool      focused;
     bool      in_use;
+    uint32_t  owner_pid; /* PID of the process that created this window      */
 } window_t;
 
 /* Global window list and current mouse position. */
@@ -54,7 +55,7 @@ void wm_init(void);
  *   w, h  : client area dimensions in pixels
  * Returns the window ID (>= 1) on success, -1 on failure.
  */
-int wm_create(const char *title, int x, int y, int w, int h);
+int wm_create(const char *title, int x, int y, int w, int h, uint32_t owner_pid);
 
 /*
  * Destroy a window: frees its pixel buffer and descriptor, removes it from
@@ -84,5 +85,11 @@ void wm_handle_mouse(int x, int y, bool clicked);
  * Returns 0 on success, -1 on error.
  */
 int wm_update_window(int win_id, const uint32_t *pixels);
+
+/*
+ * Destroy all windows owned by the given PID.
+ * Called automatically on process exit / kill to prevent window leaks.
+ */
+void wm_destroy_by_owner(uint32_t pid);
 
 #endif /* KERNEL_WM_H */
