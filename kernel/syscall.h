@@ -36,6 +36,8 @@
 #define SYS_RENAME   25
 #define SYS_COPY     26
 #define SYS_RMDIR    27
+#define SYS_GFX_DRAW  28   /* rdi = ptr to GfxCmd (user VA)   */
+#define SYS_GFX_FLUSH 29   /* no args — copies back buf to FB */
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

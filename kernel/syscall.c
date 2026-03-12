@@ -18,7 +18,9 @@
 #include "vfs.h"
 #include "heap.h"
 #include "elf.h"
+#include "gfx.h"
 #include "string.h"
+#include "../shared/gfx.h"
 #include <stdint.h>
 
 /* ── MSR addresses ───────────────────────────────────────────────────────*/
@@ -1028,6 +1030,129 @@ static int64_t sys_rmdir(uint64_t path_addr)
     return (int64_t)rc;
 }
 
+/* ── GFX syscalls ────────────────────────────────────────────────────────*/
+
+/*
+ * sys_gfx_draw — Decode a GfxCmd from user space and call the appropriate
+ *                kernel gfx_* drawing function.
+ *
+ * The caller (ring-3 task) passes a user-VA pointer to a GfxCmd struct.
+ * We copy the struct to a kernel stack buffer, validate pointer fields,
+ * copy any variable-length payload (string / pixel data) to a heap
+ * buffer, then call the kernel gfx function.
+ *
+ * Drawing targets the back buffer (kernel heap, accessible with any CR3
+ * at ring-0).  No CR3 switch is needed for drawing, only for flush.
+ */
+static int64_t sys_gfx_draw(uint64_t cmd_addr)
+{
+#define GFX_MAX_PTR_LEN  (4U * 1024U * 1024U)   /* 4 MB */
+#define USER_ADDR_MAX    0x0000800000000000ULL
+
+    if (cmd_addr >= USER_ADDR_MAX) return -1;
+    if (cmd_addr + sizeof(GfxCmd) > USER_ADDR_MAX) return -1;
+
+    /* Copy the command packet from user space. */
+    GfxCmd cmd;
+    const GfxCmd *ucmd = (const GfxCmd *)(uintptr_t)cmd_addr;
+    for (size_t i = 0; i < sizeof(GfxCmd); i++)
+        ((uint8_t *)&cmd)[i] = ((const uint8_t *)ucmd)[i];
+
+    /* Validate variable-length pointer fields. */
+    if (cmd.ptr != 0) {
+        if (cmd.ptr >= USER_ADDR_MAX) return -1;
+        if (cmd.ptr_len > GFX_MAX_PTR_LEN) return -1;
+        if (cmd.ptr + cmd.ptr_len > USER_ADDR_MAX) return -1;
+    }
+
+    switch (cmd.op) {
+    case GFX_OP_CLEAR:
+        gfx_clear(cmd.color);
+        break;
+
+    case GFX_OP_FILL_RECT:
+        gfx_fill_rect(cmd.x, cmd.y, cmd.w, cmd.h, cmd.color);
+        break;
+
+    case GFX_OP_DRAW_RECT:
+        gfx_draw_rect(cmd.x, cmd.y, cmd.w, cmd.h, cmd.color);
+        break;
+
+    case GFX_OP_HLINE:
+        gfx_hline(cmd.x, cmd.y, cmd.w, cmd.color);
+        break;
+
+    case GFX_OP_VLINE:
+        gfx_vline(cmd.x, cmd.y, cmd.h, cmd.color);
+        break;
+
+    case GFX_OP_PUT_PIXEL:
+        gfx_put_pixel(cmd.x, cmd.y, cmd.color);
+        break;
+
+    case GFX_OP_DRAW_STRING: {
+        if (cmd.ptr == 0 || cmd.ptr_len == 0) return -1;
+        if (cmd.ptr_len > 4096) return -1;  /* max string length */
+
+        /* Copy string to kernel buffer. */
+        char kstr[4096];
+        const char *ustr = (const char *)(uintptr_t)cmd.ptr;
+        uint32_t i;
+        for (i = 0; i < cmd.ptr_len && i < sizeof(kstr) - 1; i++)
+            kstr[i] = ustr[i];
+        kstr[i] = '\0';
+
+        uint32_t bg = (uint32_t)cmd.w;   /* w field repurposed as bg color */
+        gfx_draw_string(cmd.x, cmd.y, kstr, cmd.color, bg);
+        break;
+    }
+
+    case GFX_OP_BLIT: {
+        if (cmd.ptr == 0 || cmd.ptr_len == 0) return -1;
+        if (cmd.w <= 0 || cmd.h <= 0) return -1;
+        uint32_t expected = (uint32_t)cmd.w * (uint32_t)cmd.h * 4U;
+        if (cmd.ptr_len != expected) return -1;
+
+        /* Copy pixel data to kernel buffer. */
+        uint32_t *kpix = (uint32_t *)kmalloc(cmd.ptr_len);
+        if (!kpix) return -1;
+        const uint8_t *usrc = (const uint8_t *)(uintptr_t)cmd.ptr;
+        for (uint32_t i = 0; i < cmd.ptr_len; i++)
+            ((uint8_t *)kpix)[i] = usrc[i];
+
+        gfx_blit(cmd.x, cmd.y, kpix, cmd.w, cmd.h);
+        kfree(kpix);
+        break;
+    }
+
+    default:
+        return -1;
+    }
+
+    return 0;
+
+#undef GFX_MAX_PTR_LEN
+#undef USER_ADDR_MAX
+}
+
+/*
+ * sys_gfx_flush — Copy the back buffer to the hardware framebuffer.
+ *
+ * The hardware framebuffer is accessed via the identity map, which is only
+ * present in the kernel page tables.  Switch to kernel CR3, flush, then
+ * switch back.
+ */
+static int64_t sys_gfx_flush(void)
+{
+    task_t *cur = scheduler_get_current();
+
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+    gfx_flush();
+    vmm_switch_address_space(cur->pml4_phys);
+
+    return 0;
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -1064,7 +1189,9 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_MKDIR:   return sys_mkdir(arg1);
     case SYS_RENAME:  return sys_rename(arg1, arg2);
     case SYS_COPY:    return sys_copy(arg1, arg2);
-    case SYS_RMDIR:   return sys_rmdir(arg1);
+    case SYS_RMDIR:     return sys_rmdir(arg1);
+    case SYS_GFX_DRAW:  return sys_gfx_draw(arg1);
+    case SYS_GFX_FLUSH: return sys_gfx_flush();
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);
