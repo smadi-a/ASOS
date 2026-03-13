@@ -1,17 +1,24 @@
-# ASOS (in active development)
+# ASOS
 
-ASOS is a vibe coded, hobbyist-driven, independent OS featuring a bespoke microkernel architecture designed for the hardware of today, not the constraints of the 90s.
+ASOS is a vibe coded, hobbyist-driven, independent OS — built from scratch to answer the question: how hard can it be? Starting from UEFI firmware, it grows into a preemptive multitasking x86-64 kernel with its own filesystem, window manager, and desktop environment — no Linux, no libc, no safety net
 
 ![ASOS](asos.png)
+![DOOM](doom.png)
 
 
 ## DOOM
-To play DOOm, you will need to add the freedoom1.wad file in user/DOOM
+To play DOOM, you will need to add the doom1.wad file in user/DOOM
 
 
-Languages of choice:
+### Languages of choice:
 - Assembly
 - C
+- All C++ used is strictly part of the DOOM game
+
+### Limitations:
+- This currently only works in a VM. An uplift project will be needed to support standalone machine execution which includes things like multiple more drivers, a USB stack, and a USB HID driver, which is a much bigger project than the whole current kernel
+- No TCP/IP stack, or any network driver implemented for that matter
+- Desktop environment is very limited (e.g no minimize/maximize windows)
 
 ## Parts:
 - UEFI bootloder
