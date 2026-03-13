@@ -20,20 +20,27 @@ static void out_char(char *buf, size_t size, size_t *pos, char c)
 }
 
 static void out_str(char *buf, size_t size, size_t *pos,
-                    const char *s, int width, int pad_zero)
+                    const char *s, int width, int pad_zero,
+                    int left_align, int has_prec, int prec)
 {
     int len = 0;
     while (s[len]) len++;
+    /* Precision truncates strings. */
+    if (has_prec && prec < len) len = prec;
     int pad = (width > len) ? width - len : 0;
     char pc = pad_zero ? '0' : ' ';
-    while (pad--) out_char(buf, size, pos, pc);
+    if (!left_align)
+        while (pad--) out_char(buf, size, pos, pc);
     for (int i = 0; i < len; i++)
         out_char(buf, size, pos, s[i]);
+    if (left_align)
+        while (pad--) out_char(buf, size, pos, ' ');
 }
 
 static void out_unsigned(char *buf, size_t size, size_t *pos,
                          uint64_t val, int base, int upper,
-                         int width, int pad_zero)
+                         int width, int pad_zero, int left_align,
+                         int has_prec, int prec)
 {
     const char *digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
     char tmp[20];
@@ -48,23 +55,35 @@ static void out_unsigned(char *buf, size_t size, size_t *pos,
         }
     }
 
-    int pad = (width > i) ? width - i : 0;
-    char pc = pad_zero ? '0' : ' ';
-    while (pad--) out_char(buf, size, pos, pc);
+    /* Precision for integers: minimum number of digits (zero-padded). */
+    int num_len = i;
+    int prec_pad = (has_prec && prec > num_len) ? prec - num_len : 0;
+    int total = num_len + prec_pad;
+    /* When precision is specified, '0' flag is ignored for integers. */
+    int field_pad = (width > total) ? width - total : 0;
+    char pc = (pad_zero && !has_prec) ? '0' : ' ';
+    if (!left_align)
+        while (field_pad--) out_char(buf, size, pos, pc);
+    while (prec_pad--) out_char(buf, size, pos, '0');
     while (i--) out_char(buf, size, pos, tmp[i]);
+    if (left_align)
+        while (field_pad--) out_char(buf, size, pos, ' ');
 }
 
 static void out_signed(char *buf, size_t size, size_t *pos,
-                       int64_t val, int width, int pad_zero)
+                       int64_t val, int width, int pad_zero,
+                       int left_align, int has_prec, int prec)
 {
     if (val < 0) {
         out_char(buf, size, pos, '-');
         if (width > 0) width--;
         /* Handle INT64_MIN without overflow. */
         uint64_t uval = (uint64_t)(-(val + 1)) + 1;
-        out_unsigned(buf, size, pos, uval, 10, 0, width, pad_zero);
+        out_unsigned(buf, size, pos, uval, 10, 0, width, pad_zero,
+                     left_align, has_prec, prec);
     } else {
-        out_unsigned(buf, size, pos, (uint64_t)val, 10, 0, width, pad_zero);
+        out_unsigned(buf, size, pos, (uint64_t)val, 10, 0, width, pad_zero,
+                     left_align, has_prec, prec);
     }
 }
 
@@ -83,13 +102,43 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
 
         /* Flags. */
         int pad_zero = 0;
-        if (*fmt == '0') { pad_zero = 1; fmt++; }
+        int left_align = 0;
+        while (*fmt == '0' || *fmt == '-') {
+            if (*fmt == '0') pad_zero = 1;
+            if (*fmt == '-') left_align = 1;
+            fmt++;
+        }
+        /* Left-align overrides zero-pad. */
+        if (left_align) pad_zero = 0;
 
         /* Width. */
         int width = 0;
-        while (*fmt >= '0' && *fmt <= '9') {
-            width = width * 10 + (*fmt - '0');
+        if (*fmt == '*') {
+            width = va_arg(ap, int);
+            if (width < 0) { left_align = 1; width = -width; }
             fmt++;
+        } else {
+            while (*fmt >= '0' && *fmt <= '9') {
+                width = width * 10 + (*fmt - '0');
+                fmt++;
+            }
+        }
+
+        /* Precision. */
+        int has_prec = 0, prec = 0;
+        if (*fmt == '.') {
+            has_prec = 1;
+            fmt++;
+            if (*fmt == '*') {
+                prec = va_arg(ap, int);
+                if (prec < 0) { has_prec = 0; prec = 0; }
+                fmt++;
+            } else {
+                while (*fmt >= '0' && *fmt <= '9') {
+                    prec = prec * 10 + (*fmt - '0');
+                    fmt++;
+                }
+            }
         }
 
         /* Length modifier. */
@@ -99,43 +148,56 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
         switch (*fmt) {
         case 'd': case 'i': {
             int64_t val = is_long ? va_arg(ap, long) : (int64_t)va_arg(ap, int);
-            out_signed(buf, size, &pos, val, width, pad_zero);
+            out_signed(buf, size, &pos, val, width, pad_zero,
+                       left_align, has_prec, prec);
             break;
         }
         case 'u': {
             uint64_t val = is_long ? va_arg(ap, unsigned long)
                                    : (uint64_t)va_arg(ap, unsigned int);
-            out_unsigned(buf, size, &pos, val, 10, 0, width, pad_zero);
+            out_unsigned(buf, size, &pos, val, 10, 0, width, pad_zero,
+                         left_align, has_prec, prec);
             break;
         }
         case 'x': {
             uint64_t val = is_long ? va_arg(ap, unsigned long)
                                    : (uint64_t)va_arg(ap, unsigned int);
-            out_unsigned(buf, size, &pos, val, 16, 0, width, pad_zero);
+            out_unsigned(buf, size, &pos, val, 16, 0, width, pad_zero,
+                         left_align, has_prec, prec);
             break;
         }
         case 'X': {
             uint64_t val = is_long ? va_arg(ap, unsigned long)
                                    : (uint64_t)va_arg(ap, unsigned int);
-            out_unsigned(buf, size, &pos, val, 16, 1, width, pad_zero);
+            out_unsigned(buf, size, &pos, val, 16, 1, width, pad_zero,
+                         left_align, has_prec, prec);
             break;
         }
         case 'p': {
             void *ptr = va_arg(ap, void *);
             out_char(buf, size, &pos, '0');
             out_char(buf, size, &pos, 'x');
-            out_unsigned(buf, size, &pos, (uint64_t)(uintptr_t)ptr, 16, 0, 0, 0);
+            out_unsigned(buf, size, &pos, (uint64_t)(uintptr_t)ptr, 16, 0, 0, 0,
+                         0, 0, 0);
             break;
         }
         case 's': {
             const char *s = va_arg(ap, const char *);
             if (!s) s = "(null)";
-            out_str(buf, size, &pos, s, width, 0);
+            out_str(buf, size, &pos, s, width, 0, left_align, has_prec, prec);
             break;
         }
         case 'c': {
             char c = (char)va_arg(ap, int);
+            if (!left_align) {
+                int pad = (width > 1) ? width - 1 : 0;
+                while (pad--) out_char(buf, size, &pos, ' ');
+            }
             out_char(buf, size, &pos, c);
+            if (left_align) {
+                int pad = (width > 1) ? width - 1 : 0;
+                while (pad--) out_char(buf, size, &pos, ' ');
+            }
             break;
         }
         case '%':
@@ -156,6 +218,20 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap)
         buf[size - 1] = '\0';
 
     return (int)pos;
+}
+
+int vsprintf(char *buf, const char *fmt, va_list ap)
+{
+    return vsnprintf(buf, (size_t)-1, fmt, ap);
+}
+
+int sprintf(char *buf, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = vsprintf(buf, fmt, ap);
+    va_end(ap);
+    return ret;
 }
 
 int snprintf(char *buf, size_t size, const char *fmt, ...)
@@ -244,4 +320,113 @@ char *gets_s(char *buf, size_t size)
 
     buf[pos] = '\0';
     return buf;
+}
+
+/* ── sscanf (minimal: %d, %x, %s, %c, %%, literal match) ──────────── */
+
+int sscanf(const char *str, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int matched = 0;
+
+    while (*fmt && *str) {
+        if (*fmt == '%') {
+            fmt++;
+
+            /* Skip width (unused but consumed). */
+            while (*fmt >= '0' && *fmt <= '9') fmt++;
+
+            /* Length modifier. */
+            int is_long = 0;
+            if (*fmt == 'l') { is_long = 1; fmt++; }
+
+            switch (*fmt) {
+            case 'd': case 'i': {
+                /* Skip whitespace. */
+                while (*str == ' ' || *str == '\t') str++;
+                int neg = 0;
+                if (*str == '-') { neg = 1; str++; }
+                else if (*str == '+') str++;
+                if (*str < '0' || *str > '9') goto done;
+                long val = 0;
+                while (*str >= '0' && *str <= '9')
+                    val = val * 10 + (*str++ - '0');
+                if (neg) val = -val;
+                if (is_long) *va_arg(ap, long *) = val;
+                else *va_arg(ap, int *) = (int)val;
+                matched++;
+                break;
+            }
+            case 'u': {
+                while (*str == ' ' || *str == '\t') str++;
+                if (*str < '0' || *str > '9') goto done;
+                unsigned long val = 0;
+                while (*str >= '0' && *str <= '9')
+                    val = val * 10 + (unsigned long)(*str++ - '0');
+                if (is_long) *va_arg(ap, unsigned long *) = val;
+                else *va_arg(ap, unsigned int *) = (unsigned int)val;
+                matched++;
+                break;
+            }
+            case 'x': case 'X': {
+                while (*str == ' ' || *str == '\t') str++;
+                if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) str += 2;
+                unsigned long val = 0;
+                int got = 0;
+                while (1) {
+                    char c = *str;
+                    int d = -1;
+                    if (c >= '0' && c <= '9') d = c - '0';
+                    else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+                    else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+                    else break;
+                    val = val * 16 + (unsigned long)d;
+                    str++;
+                    got = 1;
+                }
+                if (!got) goto done;
+                if (is_long) *va_arg(ap, unsigned long *) = val;
+                else *va_arg(ap, unsigned int *) = (unsigned int)val;
+                matched++;
+                break;
+            }
+            case 's': {
+                while (*str == ' ' || *str == '\t') str++;
+                char *dest = va_arg(ap, char *);
+                if (!*str || *str == ' ' || *str == '\t' || *str == '\n') goto done;
+                while (*str && *str != ' ' && *str != '\t' && *str != '\n')
+                    *dest++ = *str++;
+                *dest = '\0';
+                matched++;
+                break;
+            }
+            case 'c': {
+                *va_arg(ap, char *) = *str++;
+                matched++;
+                break;
+            }
+            case '%':
+                if (*str != '%') goto done;
+                str++;
+                break;
+            default:
+                goto done;
+            }
+            fmt++;
+        } else if (*fmt == ' ') {
+            /* Whitespace in format matches any amount of whitespace in input. */
+            fmt++;
+            while (*str == ' ' || *str == '\t') str++;
+        } else {
+            /* Literal match. */
+            if (*str != *fmt) goto done;
+            str++;
+            fmt++;
+        }
+    }
+
+done:
+    va_end(ap);
+    return matched;
 }
