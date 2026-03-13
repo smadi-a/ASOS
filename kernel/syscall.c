@@ -344,8 +344,27 @@ static int64_t sys_spawn(uint64_t path_addr, uint64_t argv_addr)
     child->parent_pid = cur->id;
     child->is_foreground = 1;
     cur->is_foreground = 0;
-    strncpy(child->cwd, cur->cwd, sizeof(child->cwd) - 1);
-    child->cwd[sizeof(child->cwd) - 1] = '\0';
+
+    /* Set child CWD to the directory containing the executable.
+     * e.g. /APPS/DOOM/DOOM.ELF → CWD = /APPS/DOOM/
+     * This is critical for programs that load files relative to their location. */
+    {
+        const char *last_slash = (void *)0;
+        for (const char *p = resolved; *p; p++) {
+            if (*p == '/') last_slash = p;
+        }
+        if (last_slash && last_slash != resolved) {
+            size_t dir_len = (size_t)(last_slash - resolved);
+            if (dir_len >= sizeof(child->cwd))
+                dir_len = sizeof(child->cwd) - 2;
+            memcpy(child->cwd, resolved, dir_len);
+            child->cwd[dir_len] = '/';
+            child->cwd[dir_len + 1] = '\0';
+        } else {
+            child->cwd[0] = '/';
+            child->cwd[1] = '\0';
+        }
+    }
     scheduler_add_task(child);
 
     serial_puts("[SPAWN] Spawned ");
