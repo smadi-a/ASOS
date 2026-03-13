@@ -836,14 +836,13 @@ int main(void)
     /* ── Event loop ─────────────────────────────────────────────────────── */
 
     for (;;) {
-        /* Drain any pending WM events (mouse move, etc.) so the event
-         * queue does not fill up.  We do NOT act on WIN_CLOSE here —
-         * the terminal's lifetime is managed by the 'out' command or
-         * by killing the process externally. */
+        /* Drain pending WM events; exit on close-button click. */
         {
             term_event_t evt;
-            while (get_event(&evt) == 0)
-                ;   /* discard */
+            while (get_event(&evt) == 0) {
+                if (evt.type == EVENT_WIN_CLOSE)
+                    exit(0);
+            }
         }
 
         long k = key_poll();
