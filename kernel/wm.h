@@ -19,7 +19,8 @@
 
 #define MAX_WINDOWS    16
 #define WM_TITLEBAR_H  20   /* Title bar height in pixels                */
-#define WM_CURSOR_SZ    8   /* Mouse cursor size in pixels               */
+#define WM_CURSOR_W    12   /* Mouse cursor width  in pixels             */
+#define WM_CURSOR_H    18   /* Mouse cursor height in pixels             */
 #define TASKBAR_HEIGHT 28   /* Top taskbar height; windows must stay below */
 
 /* Window flags */

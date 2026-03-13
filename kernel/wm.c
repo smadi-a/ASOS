@@ -31,7 +31,8 @@
 #define COL_CLOSE_BTN_TEXT    0xFFFFFFUL
 #define COL_TITLE_TEXT        0xFFFFFFUL
 #define COL_WIN_PLACEHOLDER   0xC0C0C0UL   /* Grey fill when buffer is NULL  */
-#define COL_CURSOR            0xFFFFFFUL   /* White mouse cursor             */
+#define COL_CURSOR_FILL       0xFFFFFFUL   /* White cursor fill              */
+#define COL_CURSOR_BORDER     0x000000UL   /* Black cursor outline           */
 #define COL_TASKBAR           0x1E1E1EUL   /* Dark-charcoal taskbar          */
 #define COL_TASKBAR_BORDER    0x444444UL   /* 1-px bottom edge of taskbar    */
 #define COL_TASKBAR_TEXT      0xFFFFFFUL
@@ -480,6 +481,35 @@ void wm_compose(void)
     /* 4. Taskbar — drawn after all windows so it is always visible. */
     wm_draw_taskbar(sw);
 
-    /* 5. Mouse cursor — topmost element. */
-    gfx_fill_rect(g_mouse_x, g_mouse_y, WM_CURSOR_SZ, WM_CURSOR_SZ, COL_CURSOR);
+    /* 5. Mouse cursor — topmost element.
+     *    Classic arrow pointer: 12 wide × 18 tall.
+     *    0 = transparent, 1 = black outline, 2 = white fill.           */
+    static const uint8_t cursor[18][12] = {
+        {1,0,0,0,0,0,0,0,0,0,0,0},
+        {1,1,0,0,0,0,0,0,0,0,0,0},
+        {1,2,1,0,0,0,0,0,0,0,0,0},
+        {1,2,2,1,0,0,0,0,0,0,0,0},
+        {1,2,2,2,1,0,0,0,0,0,0,0},
+        {1,2,2,2,2,1,0,0,0,0,0,0},
+        {1,2,2,2,2,2,1,0,0,0,0,0},
+        {1,2,2,2,2,2,2,1,0,0,0,0},
+        {1,2,2,2,2,2,2,2,1,0,0,0},
+        {1,2,2,2,2,2,2,2,2,1,0,0},
+        {1,2,2,2,2,2,2,2,2,2,1,0},
+        {1,2,2,2,2,2,2,2,2,2,2,1},
+        {1,2,2,2,2,2,1,1,1,1,1,1},
+        {1,2,2,2,1,2,1,0,0,0,0,0},
+        {1,2,2,1,0,1,2,1,0,0,0,0},
+        {1,2,1,0,0,1,2,1,0,0,0,0},
+        {1,1,0,0,0,0,1,2,1,0,0,0},
+        {1,0,0,0,0,0,1,1,1,0,0,0},
+    };
+    for (int cy = 0; cy < 18; cy++) {
+        for (int cx = 0; cx < 12; cx++) {
+            uint8_t v = cursor[cy][cx];
+            if (v == 0) continue;
+            uint32_t col = (v == 1) ? COL_CURSOR_BORDER : COL_CURSOR_FILL;
+            gfx_put_pixel(g_mouse_x + cx, g_mouse_y + cy, col);
+        }
+    }
 }
