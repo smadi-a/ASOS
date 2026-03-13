@@ -44,6 +44,7 @@
 #define SYS_KEY_POLL   33  /* no args — returns key char (0–255) or -1 if none  */
 #define SYS_GET_EVENT  34  /* rdi = ptr to event_t (user VA) → 0 if event popped, -1 if empty */
 #define SYS_SHUTDOWN   35  /* no args — power off the machine (does not return) */
+#define SYS_UPTIME     36  /* no args — returns PIT ticks (≈ milliseconds) since boot */
 
 /* Initialise the syscall/sysret mechanism (STAR, LSTAR, FMASK MSRs). */
 void syscall_init(void);

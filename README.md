@@ -46,7 +46,7 @@ Languages of choice:
 - [x] Build a terminal emulator
 - [x] GUI toolkit and syscall API for apps
 - [x] Launcher button on the task bar which includes option to shutdown and a shortcut to our GUI apps (the terminal emulator for now)
-- [ ] Basic desktop apps: calculator, text editor, drawing app
+- [x] Basic desktop apps: calculator, text editor, drawing app
 - [ ] Will not do: PCI bus enumeration
 - [ ] Will not do: Network interface driver
 - [ ] Will not do: TCP/IP stack

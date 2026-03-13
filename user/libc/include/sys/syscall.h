@@ -43,6 +43,7 @@
 #define SYS_KEY_POLL   33
 #define SYS_GET_EVENT  34
 #define SYS_SHUTDOWN   35
+#define SYS_UPTIME     36
 
 static inline int64_t __syscall0(uint64_t num)
 {
