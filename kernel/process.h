@@ -10,6 +10,10 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "../shared/event.h"
+
+/* Per-process event ring buffer capacity (must be power of 2). */
+#define EVENT_QUEUE_SIZE  64
 
 typedef enum {
     TASK_CREATED,
@@ -59,6 +63,11 @@ typedef struct task {
         int      in_use;             /* 1 if slot is occupied            */
         char     name_83[11];        /* FAT 8.3 name for write updates   */
     } fd_table[MAX_OPEN_FILES];
+
+    /* Per-process event queue (ring buffer, guarded by cli/sti). */
+    event_t        event_queue[EVENT_QUEUE_SIZE];
+    uint8_t        event_head;          /* Next slot to read from           */
+    uint8_t        event_tail;          /* Next slot to write to            */
 
     struct task   *next;               /* Ready-queue linked list          */
     struct task   *all_next;           /* Global task list (forward)       */

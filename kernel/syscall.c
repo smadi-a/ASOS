@@ -1307,6 +1307,43 @@ static int64_t sys_key_poll(void)
     return -1;
 }
 
+/*
+ * sys_get_event — Pop one event from the calling process's event queue.
+ *
+ * arg1 = user VA of event_t to fill.
+ * Returns 0 if an event was written, -1 if the queue is empty.
+ */
+static int64_t sys_get_event(uint64_t out_addr)
+{
+#define EVT_USER_MAX 0x0000800000000000ULL
+    if (out_addr == 0 || out_addr >= EVT_USER_MAX) return -1;
+    if (out_addr + sizeof(event_t) > EVT_USER_MAX) return -1;
+
+    task_t *cur = scheduler_get_current();
+
+    /* Disable interrupts while reading the ring buffer to prevent
+     * concurrent modification by wm_compose (called from another
+     * syscall or IRQ context). */
+    interrupts_disable();
+
+    if (cur->event_head == cur->event_tail) {
+        interrupts_enable();
+        return -1;   /* Queue empty */
+    }
+
+    event_t evt = cur->event_queue[cur->event_head];
+    cur->event_head = (cur->event_head + 1) & (EVENT_QUEUE_SIZE - 1);
+
+    interrupts_enable();
+
+    /* Copy to user space. */
+    event_t *uout = (event_t *)(uintptr_t)out_addr;
+    *uout = evt;
+
+    return 0;
+#undef EVT_USER_MAX
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────────────*/
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
@@ -1347,6 +1384,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_WIN_CREATE: return sys_win_create(arg1, arg2, arg3, arg4, arg5);
     case SYS_WIN_UPDATE: return sys_win_update(arg1, arg2);
     case SYS_KEY_POLL:   return sys_key_poll();
+    case SYS_GET_EVENT:  return sys_get_event(arg1);
     default:
         serial_puts("[SYSCALL] Unknown syscall ");
         sc_put_dec(num);

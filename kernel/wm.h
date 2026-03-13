@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../shared/event.h"
 
 #define MAX_WINDOWS    16
 #define WM_TITLEBAR_H  20   /* Title bar height in pixels                */
@@ -98,5 +99,11 @@ void wm_destroy_by_owner(uint32_t pid);
  * no user window is focused (only the root window / wallpaper exists).
  */
 uint32_t wm_get_focused_owner(void);
+
+/*
+ * Push an event to the task that owns the currently focused window.
+ * Called with interrupts disabled by the caller.
+ */
+void wm_push_event_to_focused(const event_t *evt);
 
 #endif /* KERNEL_WM_H */
