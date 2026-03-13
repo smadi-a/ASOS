@@ -735,8 +735,10 @@ static void launcher_spawn_doom(void)
 
     uint32_t fsz = vfs_size(&elf_file);
     void *elf_buf = kmalloc(fsz);
+    if (!elf_buf) { serial_puts("[LAUNCHER] kmalloc failed for DOOM.ELF\n"); return; }
     uint32_t got = 0;
-    if (vfs_read(&elf_file, elf_buf, fsz, &got) != 0 || got == 0) {
+    int vrc = vfs_read(&elf_file, elf_buf, fsz, &got);
+    if (vrc != 0 || got == 0) {
         kfree(elf_buf);
         vfs_close(&elf_file);
         serial_puts("[LAUNCHER] Failed to read DOOM.ELF\n");
