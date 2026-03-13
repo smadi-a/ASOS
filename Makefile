@@ -365,7 +365,18 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) user-programs | $(BUILD)
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/calc.elf    ::CALC.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/pencil.elf ::PENCIL.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/note.elf   ::NOTE.ELF
-	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/DOOM/asos/doom.elf ::DOOM.ELF
+	$(MMD) -i $(DISK_IMG)@@$(ESP_OFFSET) ::/APPS ::/APPS/DOOM
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/DOOM/asos/doom.elf ::/APPS/DOOM/DOOM.ELF
+	@if [ -f $(USER_DIR)/DOOM/freedoom1.wad ]; then \
+		$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/DOOM/freedoom1.wad ::/APPS/DOOM/DOOM1.WAD; \
+		echo "  Installed freedoom1.wad as DOOM1.WAD"; \
+	elif [ -f $(USER_DIR)/DOOM/doom1.wad ]; then \
+		$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/DOOM/doom1.wad ::/APPS/DOOM/DOOM1.WAD; \
+		echo "  Installed doom1.wad as DOOM1.WAD"; \
+	else \
+		echo "  WARNING: No WAD file found in $(USER_DIR)/DOOM/"; \
+		echo "  Place freedoom1.wad or doom1.wad in $(USER_DIR)/DOOM/ to play DOOM"; \
+	fi
 
 	@echo "Disk image ready: $(DISK_IMG)"
 
