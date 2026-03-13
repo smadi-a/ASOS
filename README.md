@@ -4,6 +4,11 @@ ASOS is a vibe coded, hobbyist-driven, independent OS featuring a bespoke microk
 
 ![ASOS](asos.png)
 
+
+## DOOM
+To play DOOm, you will need to add the freedoom1.wad file in user/DOOM
+
+
 Languages of choice:
 - Assembly
 - C

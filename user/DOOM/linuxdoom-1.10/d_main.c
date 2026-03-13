@@ -586,11 +586,11 @@ void IdentifyVersion (void)
     // Retail.
     doomuwad = malloc(strlen(doomwaddir)+1+8+1);
     sprintf(doomuwad, "%s/doomu.wad", doomwaddir);
-    
+
     // Registered.
     doomwad = malloc(strlen(doomwaddir)+1+8+1);
     sprintf(doomwad, "%s/doom.wad", doomwaddir);
-    
+
     // Shareware.
     doom1wad = malloc(strlen(doomwaddir)+1+9+1);
     sprintf(doom1wad, "%s/doom1.wad", doomwaddir);
@@ -612,6 +612,17 @@ void IdentifyVersion (void)
     if (!home)
       I_Error("Please set $HOME to your home directory");
     sprintf(basedefault, "%s/.doomrc", home);
+#else
+    // ASOS: WAD files live in the process's cwd (set to /APPS/DOOM by launcher).
+    // Use uppercase names to match FAT32 8.3 convention.
+    doom2wad    = "DOOM2.WAD";
+    doomuwad    = "DOOMU.WAD";
+    doomwad     = "DOOM.WAD";
+    doom1wad    = "DOOM1.WAD";
+    plutoniawad = "PLUTONIA.WAD";
+    tntwad      = "TNT.WAD";
+    doom2fwad   = "DOOM2F.WAD";
+    basedefault[0] = '\0';
 #endif
 
     if (M_CheckParm ("-shdev"))
