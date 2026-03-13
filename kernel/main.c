@@ -446,15 +446,11 @@ static void kernel_main2(void)
     /* ── Ring-3 user processes ───────────────────────────────────────── */
     scheduler_init();
 
-    /* Load the desktop (init process) from disk.
-     * Priority: DESKTOP.ELF → SHELL.ELF → in-kernel demo programs.
-     * DESKTOP.ELF is responsible for spawning SHELL.ELF itself. */
-    serial_puts("[INIT] Loading desktop...\n");
+    /* Load the init process from disk. */
     {
         bool loaded = false;
         vfs_file_t elf_file;
 
-        /* 1. Preferred: DESKTOP.ELF — full GUI desktop + spawns shell. */
         if (vfs_open("/DESKTOP.ELF", &elf_file) == 0) {
             uint32_t fsz = vfs_size(&elf_file);
             void *elf_buf = kmalloc(fsz);
