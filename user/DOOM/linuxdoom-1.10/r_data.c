@@ -84,10 +84,10 @@ typedef struct
 typedef struct
 {
     char		name[8];
-    boolean		masked;	
+    int			masked;
     short		width;
     short		height;
-    void		**columndirectory;	// OBSOLETE
+    int			columndirectory;	// OBSOLETE (was void**, use int for 64-bit compat)
     short		patchcount;
     mappatch_t	patches[1];
 } maptexture_t;
@@ -639,7 +639,7 @@ void R_InitColormaps (void)
     lump = W_GetNumForName("COLORMAP"); 
     length = W_LumpLength (lump) + 255; 
     colormaps = Z_Malloc (length, PU_STATIC, 0); 
-    colormaps = (byte *)( ((int)colormaps + 255)&~0xff); 
+    colormaps = (byte *)( ((uintptr_t)colormaps + 255)&~(uintptr_t)0xff);
     W_ReadLump (lump,colormaps); 
 }
 
