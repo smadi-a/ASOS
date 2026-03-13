@@ -1329,22 +1329,18 @@ static int64_t sys_get_event(uint64_t out_addr)
 
     task_t *cur = scheduler_get_current();
 
-    /* Disable interrupts while reading the ring buffer to prevent
-     * concurrent modification by wm_compose (called from another
-     * syscall or IRQ context). */
-    interrupts_disable();
+    /* Interrupts are already disabled by FMASK on syscall entry.
+     * Do NOT call interrupts_enable() here — that would re-enable
+     * interrupts in the middle of the syscall fast path, allowing
+     * preemption before sysret and corrupting the return sequence. */
 
-    if (cur->event_head == cur->event_tail) {
-        interrupts_enable();
+    if (cur->event_head == cur->event_tail)
         return -1;   /* Queue empty */
-    }
 
     event_t evt = cur->event_queue[cur->event_head];
     cur->event_head = (cur->event_head + 1) & (EVENT_QUEUE_SIZE - 1);
 
-    interrupts_enable();
-
-    /* Copy to user space. */
+    /* Copy to user space (user CR3 is still active). */
     event_t *uout = (event_t *)(uintptr_t)out_addr;
     *uout = evt;
 

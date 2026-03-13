@@ -292,7 +292,23 @@ void wm_handle_mouse(int x, int y, bool clicked)
                         x >= close_x && x < close_x + 16 &&
                         y >= w->y + 2 && y < w->y + WM_TITLEBAR_H - 2)
                     {
-                        wm_destroy(w->id);
+                        /* Send EVENT_WIN_CLOSE to the owning process
+                         * instead of destroying immediately.  The app
+                         * can then clean up and exit gracefully. */
+                        task_t *owner = scheduler_find_task_by_pid(
+                                            (uint64_t)w->owner_pid);
+                        if (owner) {
+                            event_t ce;
+                            ce.type = EVENT_WIN_CLOSE;
+                            ce._pad = 0;
+                            ce.x    = 0;
+                            ce.y    = 0;
+                            ce.code = (uint16_t)w->id;
+                            task_push_event(owner, &ce);
+                        } else {
+                            /* Owner already dead — destroy directly. */
+                            wm_destroy(w->id);
+                        }
                         break;
                     }
                 }
