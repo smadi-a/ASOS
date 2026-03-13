@@ -18,9 +18,9 @@ LDFLAGS  := -T user.ld -nostdlib
 
 PROGRAMS := hello.elf shell.elf echo.elf cat.elf loop.elf gfxtest.elf win_test.elf desktop.elf terminal.elf calc.elf pencil.elf note.elf
 
-.PHONY: all clean libc
+.PHONY: all clean libc doom
 
-all: libc $(PROGRAMS)
+all: libc $(PROGRAMS) doom
 
 libc:
 	$(MAKE) -C $(LIBC_DIR)
@@ -31,6 +31,10 @@ libc:
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+doom:
+	$(MAKE) -C DOOM
+
 clean:
 	rm -f *.o *.elf
 	$(MAKE) -C $(LIBC_DIR) clean
+	$(MAKE) -C DOOM clean

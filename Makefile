@@ -365,6 +365,7 @@ $(DISK_IMG): $(BL_EFI) $(KERNEL_ELF) user-programs | $(BUILD)
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/calc.elf    ::CALC.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/pencil.elf ::PENCIL.ELF
 	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/note.elf   ::NOTE.ELF
+	$(MCOPY) -i $(DISK_IMG)@@$(ESP_OFFSET) $(USER_DIR)/DOOM/asos/doom.elf ::DOOM.ELF
 
 	@echo "Disk image ready: $(DISK_IMG)"
 
