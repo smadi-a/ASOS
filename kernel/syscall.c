@@ -775,7 +775,6 @@ static int64_t sys_fread(uint64_t fd, uint64_t buf_addr, uint64_t count)
     if (!cur->fd_table[idx].in_use) return -1;
 
     if (count == 0) return 0;
-    if (count > 65536) count = 65536;
 
     /* Reconstruct a vfs_file_t from the fd entry. */
     vfs_file_t vf;
@@ -790,7 +789,7 @@ static int64_t sys_fread(uint64_t fd, uint64_t buf_addr, uint64_t count)
     uint64_t total_read = 0;
 
     while (total_read < count) {
-        uint8_t kbuf[512];
+        uint8_t kbuf[4096];
         uint64_t chunk = count - total_read;
         if (chunk > sizeof(kbuf)) chunk = sizeof(kbuf);
 
