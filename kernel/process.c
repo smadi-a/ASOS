@@ -194,7 +194,7 @@ task_t *task_create_kernel(const char *name, void (*entry_point)(void))
 
 #define USER_CODE_VIRT   0x400000ULL
 #define USER_STACK_VIRT  0x00007FFFFFF00000ULL
-#define USER_STACK_PAGES 4   /* 16 KB */
+#define USER_STACK_PAGES 64  /* 256 KB */
 
 task_t *task_create_user(const char *name, void (*entry_point)(void),
                          size_t code_size)

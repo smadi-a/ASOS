@@ -196,13 +196,16 @@ void W_AddFile (char *filename)
 	header.numlumps = LONG(header.numlumps);
 	header.infotableofs = LONG(header.infotableofs);
 	length = header.numlumps*sizeof(filelump_t);
-	fileinfo = alloca (length);
+	fileinfo = malloc (length);
+	if (!fileinfo)
+	    I_Error ("Couldn't malloc fileinfo");
 	lseek (handle, header.infotableofs, SEEK_SET);
 	read (handle, fileinfo, length);
 	numlumps += header.numlumps;
     }
 
-    
+    filelump_t *fileinfo_base = fileinfo;
+
     // Fill in lumpinfo
     lumpinfo = realloc (lumpinfo, numlumps*sizeof(lumpinfo_t));
 
@@ -210,9 +213,9 @@ void W_AddFile (char *filename)
 	I_Error ("Couldn't realloc lumpinfo");
 
     lump_p = &lumpinfo[startlump];
-	
+
     storehandle = reloadname ? -1 : handle;
-	
+
     for (i=startlump ; i<numlumps ; i++,lump_p++, fileinfo++)
     {
 	lump_p->handle = storehandle;
@@ -220,7 +223,9 @@ void W_AddFile (char *filename)
 	lump_p->size = LONG(fileinfo->size);
 	strncpy (lump_p->name, fileinfo->name, 8);
     }
-	
+
+    free (fileinfo_base);
+
     if (reloadname)
 	close (handle);
 }
@@ -253,13 +258,17 @@ void W_Reload (void)
     lumpcount = LONG(header.numlumps);
     header.infotableofs = LONG(header.infotableofs);
     length = lumpcount*sizeof(filelump_t);
-    fileinfo = alloca (length);
+    fileinfo = malloc (length);
+    if (!fileinfo)
+	I_Error ("W_Reload: couldn't malloc fileinfo");
     lseek (handle, header.infotableofs, SEEK_SET);
     read (handle, fileinfo, length);
-    
+
+    filelump_t *fileinfo_base2 = fileinfo;
+
     // Fill in lumpinfo
     lump_p = &lumpinfo[reloadlump];
-	
+
     for (i=reloadlump ;
 	 i<reloadlump+lumpcount ;
 	 i++,lump_p++, fileinfo++)
@@ -270,7 +279,9 @@ void W_Reload (void)
 	lump_p->position = LONG(fileinfo->filepos);
 	lump_p->size = LONG(fileinfo->size);
     }
-	
+
+    free (fileinfo_base2);
+
     close (handle);
 }
 
