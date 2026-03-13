@@ -72,6 +72,7 @@ window_t *g_windows[MAX_WINDOWS];
 int       g_window_count = 0;
 int       g_mouse_x      = 0;
 int       g_mouse_y      = 0;
+int       g_window_stack[MAX_WINDOWS];
 
 /* Drag tracking */
 static window_t *s_dragging = NULL;
@@ -121,8 +122,10 @@ static void fmt2(char *buf, uint32_t val)
 
 void wm_init(void)
 {
-    for (int i = 0; i < MAX_WINDOWS; i++)
+    for (int i = 0; i < MAX_WINDOWS; i++) {
         g_windows[i] = NULL;
+        g_window_stack[i] = -1;
+    }
     g_window_count = 0;
 
     /* Centre cursor. */
@@ -155,6 +158,36 @@ void wm_init(void)
 
     g_windows[0]   = root;
     g_window_count = 1;
+    g_window_stack[0] = 0;   /* Root pinned at bottom of Z-order */
+}
+
+/* ── wm_bring_to_front ─────────────────────────────────────────────────── */
+
+void wm_bring_to_front(int win_id)
+{
+    /* Root window (id 0) is pinned at stack[0] — never move it. */
+    if (win_id <= 0 || win_id >= MAX_WINDOWS) return;
+
+    /* Find win_id in the stack (skip position 0 which is always root). */
+    int pos = -1;
+    for (int i = 1; i < MAX_WINDOWS; i++) {
+        if (g_window_stack[i] == win_id) { pos = i; break; }
+    }
+    if (pos < 0) return;   /* not in the stack */
+
+    /* Find the highest active slot (last non-(-1) entry). */
+    int top = 0;
+    for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
+        if (g_window_stack[i] != -1) { top = i; break; }
+    }
+
+    /* Already at the top — nothing to do. */
+    if (pos == top) return;
+
+    /* Shift everything above pos down by one, then place win_id at top. */
+    for (int i = pos; i < top; i++)
+        g_window_stack[i] = g_window_stack[i + 1];
+    g_window_stack[top] = win_id;
 }
 
 /* ── wm_create ─────────────────────────────────────────────────────────── */
@@ -214,6 +247,15 @@ int wm_create(const char *title, int x, int y, int w, int h, uint32_t owner_pid)
 
     g_windows[slot] = win;
     g_window_count++;
+
+    /* Push new window to the top of the Z-order stack. */
+    for (int i = 1; i < MAX_WINDOWS; i++) {
+        if (g_window_stack[i] == -1) {
+            g_window_stack[i] = slot;
+            break;
+        }
+    }
+
     return slot;
 }
 
@@ -240,10 +282,22 @@ void wm_destroy(int win_id)
     g_windows[win_id] = NULL;
     g_window_count--;
 
-    /* If any window was focused, focus the topmost remaining one. */
+    /* Remove from Z-order stack and compact. */
+    for (int i = 1; i < MAX_WINDOWS; i++) {
+        if (g_window_stack[i] == win_id) {
+            /* Shift everything above down by one. */
+            for (int j = i; j < MAX_WINDOWS - 1; j++)
+                g_window_stack[j] = g_window_stack[j + 1];
+            g_window_stack[MAX_WINDOWS - 1] = -1;
+            break;
+        }
+    }
+
+    /* Focus the topmost remaining window using Z-order stack. */
     for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
-        if (g_windows[i] && g_windows[i]->in_use) {
-            g_windows[i]->focused = true;
+        int id = g_window_stack[i];
+        if (id != -1 && g_windows[id] && g_windows[id]->in_use) {
+            g_windows[id]->focused = true;
             break;
         }
     }
@@ -265,7 +319,9 @@ void wm_destroy_by_owner(uint32_t pid)
 uint32_t wm_get_focused_owner(void)
 {
     for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
-        window_t *w = g_windows[i];
+        int id = g_window_stack[i];
+        if (id < 1) continue;
+        window_t *w = g_windows[id];
         if (w && w->in_use && w->focused)
             return w->owner_pid;
     }
@@ -340,9 +396,11 @@ void wm_handle_mouse(int x, int y, bool clicked)
                 goto mouse_done;
             }
 
-            /* Search from the top (highest slot index) downward; skip root. */
-            for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
-                window_t *w = g_windows[i];
+            /* Search Z-order stack from top (highest) downward; skip root. */
+            for (int si = MAX_WINDOWS - 1; si >= 1; si--) {
+                int id = g_window_stack[si];
+                if (id < 1) continue;
+                window_t *w = g_windows[id];
                 if (!w || !w->in_use) continue;
 
                 /* ── Close button hit-test ─────────────────────────── */
@@ -379,11 +437,12 @@ void wm_handle_mouse(int x, int y, bool clicked)
                     y >= w->y && y < w->y + WM_TITLEBAR_H)
                 {
                     s_dragging = w;
-                    /* Focus this window, unfocus all others (skip root). */
+                    /* Focus + bring to front. */
                     for (int j = 1; j < MAX_WINDOWS; j++) {
                         if (g_windows[j]) g_windows[j]->focused = false;
                     }
                     w->focused = true;
+                    wm_bring_to_front(id);
                     break;
                 }
 
@@ -396,6 +455,7 @@ void wm_handle_mouse(int x, int y, bool clicked)
                         if (g_windows[j]) g_windows[j]->focused = false;
                     }
                     w->focused = true;
+                    wm_bring_to_front(id);
                     break;
                 }
             }
@@ -435,7 +495,9 @@ void wm_handle_mouse(int x, int y, bool clicked)
             uint32_t owner = wm_get_focused_owner();
             if (owner != 0) {
                 for (int i = MAX_WINDOWS - 1; i >= 1; i--) {
-                    window_t *fw = g_windows[i];
+                    int fid = g_window_stack[i];
+                    if (fid < 1) continue;
+                    window_t *fw = g_windows[fid];
                     if (fw && fw->in_use && fw->focused) {
                         rel_x = (int16_t)(x - fw->x);
                         rel_y = (int16_t)(y - fw->y - WM_TITLEBAR_H);
@@ -753,8 +815,10 @@ static void wm_draw_taskbar(uint32_t sw)
     int tab_y   = 3;
     int label_y = (TASKBAR_HEIGHT - 16) / 2;
 
-    for (int i = 1; i < MAX_WINDOWS; i++) {
-        window_t *w = g_windows[i];
+    for (int si = 1; si < MAX_WINDOWS; si++) {
+        int id = g_window_stack[si];
+        if (id < 1) continue;
+        window_t *w = g_windows[id];
         if (!w || !w->in_use) continue;
 
         /* Stop before overlapping the clock. */
@@ -815,10 +879,12 @@ void wm_compose(void)
     /* 2. Root window — fill entire screen with wallpaper colour. */
     gfx_fill_rect(0, 0, (int)sw, (int)sh, COL_WALLPAPER);
 
-    /* 3. Draw normal windows back-to-front (Painter's Algorithm).
-     *    Slot 0 is the root window; user windows start at slot 1. */
-    for (int i = 1; i < MAX_WINDOWS; i++) {
-        window_t *w = g_windows[i];
+    /* 3. Draw normal windows back-to-front using Z-order stack.
+     *    Stack[0] is the root window (already drawn); user windows from stack[1]. */
+    for (int si = 1; si < MAX_WINDOWS; si++) {
+        int id = g_window_stack[si];
+        if (id < 1) continue;
+        window_t *w = g_windows[id];
         if (!w || !w->in_use) continue;
 
         /* ── Title bar ────────────────────────────────────────────── */

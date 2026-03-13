@@ -47,8 +47,20 @@ extern int       g_window_count;
 extern int       g_mouse_x;
 extern int       g_mouse_y;
 
+/*
+ * Z-order stack: window IDs from bottom (index 0) to top.
+ * -1 = empty slot.  window_stack[0] is always 0 (root window).
+ */
+extern int       g_window_stack[MAX_WINDOWS];
+
 /* Initialise the window manager (creates root window, centres cursor). */
 void wm_init(void);
+
+/*
+ * Bring a window to the front of the Z-order stack.
+ * The root window (id == 0) is pinned at position 0 and cannot be moved.
+ */
+void wm_bring_to_front(int win_id);
 
 /*
  * Create a new window (slots 1–15; slot 0 is reserved for the root window).
