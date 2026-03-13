@@ -22,6 +22,7 @@
 
 #include "ata.h"
 #include "io.h"
+#include "pit.h"
 #include "serial.h"
 #include <stddef.h>
 
@@ -67,17 +68,33 @@ static void ata_delay400(void)
     inb(ATA_ALT_STATUS);
 }
 
+/* Timeout in milliseconds for ATA operations (PIT-based). */
+#define ATA_TIMEOUT_MS  2000U
+
 /*
- * Spin until BSY clears.  Returns 0 on success, -1 if BSY never clears
- * (after ~10 M iterations — no real-time clock, so this is approximate).
+ * Spin until BSY clears.  Uses the PIT tick counter for a real-time
+ * 2-second timeout so the kernel doesn't hang forever on a stuck drive.
+ * Falls back to an iteration-based limit if PIT isn't running yet (during
+ * early init, before pit_init + STI).
  */
 static int ata_wait_bsy(void)
 {
-    for (uint32_t i = 0; i < 0x800000U; i++) {
+    uint64_t start = pit_get_ticks();
+    for (;;) {
         if (!(inb(ATA_STATUS) & ATA_SR_BSY))
             return 0;
+        uint64_t now = pit_get_ticks();
+        if (now != start && (now - start) >= ATA_TIMEOUT_MS)
+            return -1;   /* Real-time timeout */
+        /* If PIT isn't ticking (early init), bail after iterations. */
+        if (now == start) {
+            for (uint32_t i = 0; i < 0x800000U; i++) {
+                if (!(inb(ATA_STATUS) & ATA_SR_BSY))
+                    return 0;
+            }
+            return -1;
+        }
     }
-    return -1;   /* Timeout */
 }
 
 /*
@@ -86,12 +103,23 @@ static int ata_wait_bsy(void)
  */
 static int ata_wait_drq(void)
 {
-    for (uint32_t i = 0; i < 0x800000U; i++) {
+    uint64_t start = pit_get_ticks();
+    for (;;) {
         uint8_t s = inb(ATA_STATUS);
         if (s & ATA_SR_ERR) return -1;
         if (!(s & ATA_SR_BSY) && (s & ATA_SR_DRQ)) return 0;
+        uint64_t now = pit_get_ticks();
+        if (now != start && (now - start) >= ATA_TIMEOUT_MS)
+            return -1;
+        if (now == start) {
+            for (uint32_t i = 0; i < 0x800000U; i++) {
+                s = inb(ATA_STATUS);
+                if (s & ATA_SR_ERR) return -1;
+                if (!(s & ATA_SR_BSY) && (s & ATA_SR_DRQ)) return 0;
+            }
+            return -1;
+        }
     }
-    return -1;   /* Timeout */
 }
 
 /* ── Drive detection ──────────────────────────────────────────────────────*/
