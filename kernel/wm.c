@@ -25,6 +25,7 @@
 #include "vfs.h"
 #include "serial.h"
 #include "io.h"
+#include "power.h"
 #include "string.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -517,20 +518,7 @@ static void launcher_spawn_terminal(void)
  */
 static void launcher_shutdown(void)
 {
-    serial_puts("[SHUTDOWN] Powering off...\n");
-
-    /* QEMU -device isa-debug-exit,iobase=0x501 (exit code (val<<1)|1). */
-    outw(0x604, 0x2000);   /* ACPI shutdown (QEMU default PM1a port) */
-
-    /* Bochs/old QEMU shutdown port. */
-    outw(0xB004, 0x2000);
-
-    /* VirtualBox ACPI. */
-    outw(0x4004, 0x3400);
-
-    /* If we're still alive, halt. */
-    __asm__ volatile ("cli; hlt");
-    for (;;) __asm__ volatile ("hlt");
+    sys_shutdown();   /* does not return */
 }
 
 /* ── Launcher menu drawing ────────────────────────────────────────────── */
