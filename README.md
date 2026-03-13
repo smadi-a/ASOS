@@ -48,6 +48,7 @@ Languages of choice:
 - [x] Launcher button on the task bar which includes option to shutdown and a shortcut to our GUI apps (the terminal emulator for now)
 - [x] Basic desktop apps: calculator, text editor, drawing app
 - [x] Bring focused window to front by changing its z location
+- [ ] Port DOOM to ASOS
 - [ ] Will not do: PCI bus enumeration
 - [ ] Will not do: Network interface driver
 - [ ] Will not do: TCP/IP stack
