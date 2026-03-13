@@ -18,6 +18,7 @@
 #include "pic.h"
 #include "serial.h"
 #include "framebuffer.h"
+#include "vmm.h"
 #include <stdint.h>
 
 /* ── Registered handler table ────────────────────────────────────────────*/
@@ -189,6 +190,12 @@ void isr_handler(InterruptFrame *frame)
     }
 
     /* ── Unregistered CPU exception: panic screen ── */
+
+    /* Switch to kernel page tables so the identity-mapped framebuffer is
+     * accessible.  Without this, fb_clear/fb_puts would triple-fault when
+     * the exception originated from user mode (user PTs lack identity map). */
+    vmm_switch_address_space(vmm_get_kernel_pml4());
+
     fb_clear(COLOR_BLACK);
     fb_set_cursor(0, 0);
 

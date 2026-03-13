@@ -28,6 +28,10 @@ _start:
     ; Align stack to 16 bytes.
     and rsp, -16
 
+    ; Set argc = 0, argv = NULL for main(int argc, char **argv).
+    xor edi, edi
+    xor esi, esi
+
     ; Call main().
     call main
 
