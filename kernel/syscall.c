@@ -1244,11 +1244,13 @@ static int64_t sys_win_create(uint64_t title_addr, uint64_t x_u, uint64_t y_u,
 /*
  * sys_win_update — Copy user pixels into a window's kernel buffer.
  *
- * arg1 = win_id    : window ID returned by sys_win_create
- * arg2 = buf_addr  : user VA of w*h uint32_t pixels (0xAARRGGBB)
+ * arg1 = win_id     : window ID returned by sys_win_create
+ * arg2 = buf_addr   : user VA of w*h uint32_t pixels (0xAARRGGBB)
+ * arg3 = user_size  : byte size of the pixel buffer (must equal w*h*4)
  * Returns 0 on success, -1 on error.
  */
-static int64_t sys_win_update(uint64_t win_id, uint64_t buf_addr)
+static int64_t sys_win_update(uint64_t win_id, uint64_t buf_addr,
+                               uint64_t user_size)
 {
 #define WIN_USER_MAX2 0x0000800000000000ULL
     if (win_id >= MAX_WINDOWS) return -1;
@@ -1258,6 +1260,12 @@ static int64_t sys_win_update(uint64_t win_id, uint64_t buf_addr)
 
     uint64_t buf_size = (uint64_t)w->w * (uint64_t)w->h * 4ULL;
     if (buf_size == 0 || buf_size > 4U * 1024U * 1024U) return -1;
+
+    /* Validate that the user-provided size matches the window dimensions.
+     * A size of 0 is accepted for backward compatibility (old callers
+     * that don't pass the size argument — the register will be zero). */
+    if (user_size != 0 && user_size != buf_size) return -1;
+
     if (buf_addr == 0 || buf_addr >= WIN_USER_MAX2) return -1;
     if (buf_addr + buf_size > WIN_USER_MAX2) return -1;
 
@@ -1382,7 +1390,7 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     case SYS_GFX_FLUSH:  return sys_gfx_flush();
     case SYS_GFX_INFO:   return sys_gfx_info(arg1);
     case SYS_WIN_CREATE: return sys_win_create(arg1, arg2, arg3, arg4, arg5);
-    case SYS_WIN_UPDATE: return sys_win_update(arg1, arg2);
+    case SYS_WIN_UPDATE: return sys_win_update(arg1, arg2, arg3);
     case SYS_KEY_POLL:   return sys_key_poll();
     case SYS_GET_EVENT:  return sys_get_event(arg1);
     default:

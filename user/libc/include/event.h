@@ -18,6 +18,8 @@
 #define EVENT_MOUSE_MOVE  3
 #define EVENT_MOUSE_DOWN  4
 #define EVENT_MOUSE_UP    5
+#define EVENT_WIN_CLOSE   6
+#define EVENT_WIN_RESIZE  7
 
 typedef struct {
     uint8_t  type;    /* EVENT_* constant                     */

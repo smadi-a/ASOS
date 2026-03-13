@@ -1,8 +1,8 @@
 /*
- * win_test.c — ASOS window manager test application.
+ * win_test.c — ASOS GUI toolkit demo application.
  *
- * Creates a window via SYS_WIN_CREATE, then animates a bouncing orange
- * square inside it, calling SYS_WIN_UPDATE + SYS_GFX_FLUSH each frame.
+ * Creates a window using the gui.h toolkit with a button that changes
+ * colour when clicked.  Demonstrates EVENT_WIN_CLOSE handling.
  *
  * Build: part of the normal `make` run; installed as WINTEST.ELF.
  * Run  : from the shell, type: WINTEST
@@ -11,118 +11,110 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <gfx.h>
+#include <asos/gui.h>
+#include <event.h>
 #include <sys/syscall.h>
 
-/* ── Window client dimensions ──────────────────────────────────────────── */
+/* ── Colour palette for the cycling button ─────────────────────────────── */
 
-#define WIN_W  200
-#define WIN_H  150
+#define NUM_COLORS 6
 
-/*
- * Pixel buffer lives in BSS (static) so it does not eat stack space.
- * 200 * 150 * 4 = 120,000 bytes ≈ 117 KB.
- */
-static uint32_t s_pixels[WIN_W * WIN_H];
+static const uint32_t s_colors[NUM_COLORS] = {
+    0x00CC4444U,   /* Red        */
+    0x0044AA44U,   /* Green      */
+    0x004466CCU,   /* Blue       */
+    0x00CC8800U,   /* Orange     */
+    0x008844CCU,   /* Purple     */
+    0x0044AAAAU,   /* Teal       */
+};
 
-/* ── Syscall wrappers ───────────────────────────────────────────────────── */
+static const char * const s_color_names[NUM_COLORS] = {
+    "Red", "Green", "Blue", "Orange", "Purple", "Teal",
+};
 
-/*
- * win_create — create a WM window.
- *   title : NUL-terminated window title
- *   x, y  : top-left position (includes title bar)
- *   w, h  : client area size in pixels
- * Returns window ID on success, < 0 on failure.
- */
-static inline long win_create(const char *title, int x, int y, int w, int h)
+static int s_color_idx = 0;
+static gui_widget_t *s_btn    = 0;
+static gui_widget_t *s_status = 0;
+
+/* ── Helpers ───────────────────────────────────────────────────────────── */
+
+static void copy_label(char *dst, const char *src)
 {
-    return __syscall5(SYS_WIN_CREATE,
-                      (uint64_t)(uintptr_t)title,
-                      (uint64_t)(int64_t)x,
-                      (uint64_t)(int64_t)y,
-                      (uint64_t)(int64_t)w,
-                      (uint64_t)(int64_t)h);
-}
-
-/*
- * win_update — upload pixel data to a window's kernel buffer.
- *   win_id : ID returned by win_create
- *   pixels : array of w*h 0xAARRGGBB values
- */
-static inline long win_update(int win_id, const uint32_t *pixels)
-{
-    return __syscall2(SYS_WIN_UPDATE,
-                      (uint64_t)(uint32_t)win_id,
-                      (uint64_t)(uintptr_t)pixels);
-}
-
-/* ── Rendering helpers ──────────────────────────────────────────────────── */
-
-/* Fill the entire pixel buffer with a solid colour. */
-static void buf_fill(uint32_t color)
-{
-    for (int i = 0; i < WIN_W * WIN_H; i++)
-        s_pixels[i] = color;
-}
-
-/* Draw a filled rectangle into the pixel buffer.  Clips to buffer bounds. */
-static void buf_fill_rect(int x, int y, int w, int h, uint32_t color)
-{
-    for (int row = y; row < y + h; row++) {
-        if (row < 0 || row >= WIN_H) continue;
-        for (int col = x; col < x + w; col++) {
-            if (col < 0 || col >= WIN_W) continue;
-            s_pixels[row * WIN_W + col] = color;
-        }
+    int i = 0;
+    while (src[i] && i < GUI_LABEL_MAX - 1) {
+        dst[i] = src[i];
+        i++;
     }
+    dst[i] = '\0';
+}
+
+static void update_status(void)
+{
+    if (!s_status) return;
+    char buf[GUI_LABEL_MAX];
+    const char *prefix = "Color: ";
+    const char *name = s_color_names[s_color_idx];
+    int i = 0, j = 0;
+    while (prefix[j] && i < GUI_LABEL_MAX - 1) buf[i++] = prefix[j++];
+    j = 0;
+    while (name[j] && i < GUI_LABEL_MAX - 1)   buf[i++] = name[j++];
+    buf[i] = '\0';
+    copy_label(s_status->label, buf);
+}
+
+/* ── Button click handler ──────────────────────────────────────────────── */
+
+static void on_color_click(gui_window_t *win, gui_widget_t *w)
+{
+    (void)win;
+    s_color_idx = (s_color_idx + 1) % NUM_COLORS;
+
+    /* Update button label and face colour. */
+    copy_label(w->label, s_color_names[s_color_idx]);
+    w->face_color = s_colors[s_color_idx];
+    w->text_color = 0x00FFFFFFU;   /* White text on coloured face */
+
+    update_status();
 }
 
 /* ── main ───────────────────────────────────────────────────────────────── */
 
 int main(void)
 {
-    /* Create the window.  Title string is in .rodata, which is mapped
-     * into user pages by the ELF loader — safe to pass to the kernel. */
-    long win_id = win_create("ASOS Test Window", 100, 80, WIN_W, WIN_H);
-    if (win_id < 0)
+    gui_window_t *win = gui_init_window("Color Demo", 220, 140);
+    if (!win)
         return 1;
 
-    /* Bouncing square state. */
-    int bx = 10, by = 10;
-    int dx = 2,  dy = 2;
-    int sq = 20;   /* square side length */
+    /* Title label. */
+    gui_add_label(win, 30, 16, "Click the button!");
+
+    /* Colour-cycling button. */
+    s_btn = gui_add_button(win, 50, 50, 120, 32, "Red");
+    if (s_btn) {
+        s_btn->on_click   = on_color_click;
+        s_btn->face_color = s_colors[0];
+        s_btn->text_color = 0x00FFFFFFU;
+    }
+
+    /* Status label. */
+    s_status = gui_add_label(win, 50, 100, "Color: Red");
 
     for (;;) {
-        /* Check for quit key ('q' or 'Q'). */
-        int64_t key = __syscall0(SYS_KEY_POLL);
+        int key = gui_poll_events(win);
+
+        /* gui_poll_events returns -1 on EVENT_WIN_CLOSE. */
+        if (key == -1)
+            break;
+
+        /* Also quit on 'q'/'Q'. */
         if (key == 'q' || key == 'Q')
             break;
 
-        /* Compute a slowly shifting background colour using bx/by. */
-        uint32_t r = (uint32_t)((bx * 255) / WIN_W);
-        uint32_t b = (uint32_t)((by * 255) / WIN_H);
-        uint32_t bg = (r << 16) | 0x001800UL | b;   /* dark teal gradient */
-
-        /* 1. Clear to background. */
-        buf_fill(bg);
-
-        /* 2. Draw the bouncing square in orange. */
-        buf_fill_rect(bx, by, sq, sq, 0xFF8800UL);
-
-        /* 3. Advance and bounce off edges. */
-        bx += dx;
-        by += dy;
-        if (bx <= 0      || bx + sq >= WIN_W) { dx = -dx; bx += dx; }
-        if (by <= 0      || by + sq >= WIN_H) { dy = -dy; by += dy; }
-
-        /* 4. Push pixels to the kernel window buffer. */
-        win_update((int)win_id, s_pixels);
-
-        /* 5. Trigger the compositor and blit to screen. */
+        gui_draw(win);
         gfx_flush_display();
-
-        /* 6. Yield so other tasks get CPU time. */
         yield();
     }
 
+    gui_destroy_window(win);
     return 0;
 }

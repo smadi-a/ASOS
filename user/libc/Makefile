@@ -11,7 +11,7 @@ CFLAGS   := -ffreestanding -nostdlib -nostdinc -fno-builtin \
 ASMFLAGS := -f elf64
 
 SRCS     := src/string.c src/ctype.c src/errno.c src/unistd.c \
-            src/stdio.c src/stdlib.c src/gfx.c
+            src/stdio.c src/stdlib.c src/gfx.c src/gui.c
 OBJS     := $(SRCS:.c=.o)
 START_OBJ := start.o
 
