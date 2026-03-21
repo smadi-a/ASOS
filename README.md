@@ -5,22 +5,62 @@ ASOS is a vibe coded, hobbyist-driven, independent OS — built from scratch to 
 ![ASOS](asos.png)
 ![DOOM](doom.png)
 
-
 ## DOOM
 To play DOOM, you will need to add the doom1.wad file in user/DOOM
 
-
-### Languages of choice:
+### Languages of choice
 - Assembly
 - C
 - All C++ used is strictly part of the DOOM game
 
-### Limitations:
+### Limitations
 - This currently only works in a VM. An uplift project will be needed to support standalone machine execution which includes things like multiple more drivers, a USB stack, and a USB HID driver, which is a much bigger project than the whole current kernel
 - No TCP/IP stack, or any network driver implemented for that matter
 - Desktop environment is very limited (e.g no minimize/maximize windows)
 
-## Parts:
+## Architecture
+```
+Boot
+├── UEFI Bootloader — gnu-efi, framebuffer/memory map, page tables, jump to kernel
+└── Shared Boot Info — struct passed from bootloader to kernel
+
+Kernel Core
+├── Entry — BSS clear, init all subsystems, stack switch, launch first user process
+├── Panic — kpanic(): print, halt
+├── Memory Management
+│   ├── PMM — bitmap frame allocator, 4 KB pages, zeroed frames
+│   ├── VMM — 4-level page tables, per-process address spaces
+│   └── Heap — free-list kmalloc/kfree, 16 MB
+├── CPU Tables & Interrupts
+│   ├── GDT/TSS — kernel/user segments, double-fault stack
+│   └── IDT/ISR — 256 vectors, exception + IRQ dispatch
+├── Hardware Drivers
+│   ├── Serial (COM1), PIC, PIT (1000 Hz tick)
+│   ├── PS/2 Keyboard + Mouse
+│   └── ATA PIO disk driver
+├── Filesystem
+│   ├── GPT partition table parser
+│   ├── FAT32 read/write with subdirectories
+│   └── VFS layer with full path resolution
+├── Process Management
+│   ├── Preemptive round-robin scheduler (20 ms slices)
+│   ├── ELF64 loader
+│   ├── Per-process page tables + heap
+│   └── 34 syscalls (process, file I/O, graphics, windowing)
+└── Graphics & Windowing
+    ├── Double-buffered 2D drawing engine
+    ├── Layered compositor (16 windows, Painter's Algorithm)
+    └── Taskbar, title bars, mouse cursor, drag/focus
+
+User Space
+├── libasos — freestanding C runtime (printf, malloc, string, syscall wrappers)
+├── Desktop — init process, spawns shell, drives render loop
+├── Shell — ~20 built-in commands, external program execution
+├── Calculator, Drawing App, Text Editor, DOOM
+└── All linked at 0x400000, start.asm → main → exit
+```
+
+## Parts
 - UEFI bootloder
 - CPU Mode Setup
 - Kernel with memory management (starting monolithic, will refactor towards microkernel. Will design internal APIs from the start to be message-passing-friendly so the refactor isn't a rewrite)
@@ -34,52 +74,26 @@ To play DOOM, you will need to add the doom1.wad file in user/DOOM
 - System Calls
 - User Space: An ELF loader, A minimal C runtime, A simple shell
 
-## Milestones:
-- [x] UEFI application loads the kernel ELF into memory, sets up a framebuffer via GOP, exits boot services, and jumps to the kernel. The kernel prints "ASOS" to both serial and screen
-- [x] Set up a proper 64-bit GDT, load an IDT, wire up exception handlers (at minimum: division error, page fault, general protection fault, double fault). At this point, a fault gives you a diagnostic message instead of a triple-fault reboot
-- [x] Physical memory manager + virtual memory: Parse the UEFI memory map, build a physical frame allocator (bitmap or buddy), set up your own page tables (replacing the UEFI-provided ones), and get a kernel heap working (a simple slab or bump allocator to start). Let's go bitmap allocator for now. go with a simple free-list allocator. map the kernel at a higher-half virtual address
-- [x] Interrupts, keyboard, timer: PIC or APIC initialization, PS/2 keyboard driver (VirtualBox emulates this), PIT or APIC timer. After this, you can type characters and measure time. Let's go wit PIT  for now. Go PIT for now. Program it to fire at 1000 Hz (1ms tick), which gives us reasonable scheduling granularity later.
-- [x] Storage + FAT32 read support: ATA/AHCI driver (VirtualBox supports both), partition table parsing, read-only FAT32. You can now load files from disk. ATA PIO for now. Use a separate raw FAT32 disk image as a second drive. No partition table parsing at all, the entire disk is one FAT32 filesystem
-- [x] 6A, 6B, 6C: Process management, scheduler, context switching: Kernel threads first, then ring-3 user processes. Round-robin scheduler. TSS setup for ring transitions
-- [x] 7A, 7B: Syscall interface + ELF loader: syscall/sysret on x86_64, a minimal syscall table (write, read, exit, exec), ELF64 loading from your FAT32 volume
-- [x] 8A, 8B: Minimal C runtime + shell: A tiny libc (just enough for printf, malloc, basic string ops), and a shell that reads commands and launches ELF binaries
-- [x] Add another kernel syscall "SYS_READDIR" to support a shell command to be added later "l" which is similar to "ls"
-- [x] Add a kernel syscall that can fetch the pid of a process by name, in order to later support a shell command "pidof"
-- [x] Add more kernel syscalls SYS_KILL and SYS_PROCLIST or similar (to support the "end" command, which is similar to "kill")
-- [x] Add support for a working directory concept (to support the later implementation of the shell command "path", which is similar to "pwd")
-- [x] Add a syscall to report total/used/free space from the FAT32 volume (to support the upcoming shell "disk" command, which will be similar to the "df" command)
-- [x] Implement support for file read with offset/size control
-- [x] A, B: Add write support for the FAT32 file system
-- [x] Add basic ASOS shell commands (help, ls/l, cd/go, pwd/path, mkdir/md, touch/new, cp/copy, mv/move, rm/del, cat/show, head/top, tail/bottom, echo/say, kill/end, df/disk, clear/clean)
-- [x] PS/2 mouse Drivers
-- [x] Graphics framebuffer library
-- [x] Window manager and compositor
-- [x] Desktop environment
-- [x] Build a terminal emulator
-- [x] GUI toolkit and syscall API for apps
-- [x] Launcher button on the task bar which includes option to shutdown and a shortcut to our GUI apps (the terminal emulator for now)
-- [x] Basic desktop apps: calculator, text editor, drawing app
-- [x] Bring focused window to front by changing its z location
-- [x] Port DOOM to ASOS
-- [ ] Will not do: PCI bus enumeration
-- [ ] Will not do: Network interface driver
-- [ ] Will not do: TCP/IP stack
-- [ ] Will not do: Add more advanced shell commands (grep/find, top/proc, chmod/perm, ping/test, ifconfig/ip)
-- [ ] Will not do: DNS resolver and sockets API
-- [ ] Will not do: Enhancement: Swap bitmap allocator with a buddy allocator
-- [ ] Will not do: Enhancement: Write an AHCI driver that implements the same block device interface and swap it in
-- [ ] Will not do: Enhancement: Drop in a slab allocator for better performance
-- [ ] Will not do: Enhancement: Add APIC support and disable the PIC at that point
-- [ ] Will not do: Enhancement: Refactor towards a microkernel
-
 ## Local Dev
 - `make` to build everything + compile the vdi disk files (boot disk + data disk)
 - `make run` to run the OS using Qemu (exit using ctrl+a -> x)
 
 ## Dependencies
+Note: i probably missed some. if you're actually interested enough to try and run this in VirtualBox, you're welcome to open a PR adding anything missing.
+
 ```
 sudo apt-get update && sudo apt-get install libfdt1
 sudo apt-get update && sudo apt-get install libpmem1
 sudo apt-get update && sudo apt-get install -y librdmacm1 libslirp0 liburing2 libaio1t64
 sudo apt-get update && sudo apt-get install -y qemu-system-x86
 ```
+
+## License
+This project is licensed under the [MIT License](LICENSE).
+
+## How To
+Once `make` passes successfully, you can create a new VM in Oracle's VirtualBox and do the following:
+- Set RAM to 128 MB
+- Enable EFI boot
+- Add the generated VDI disk to your machine as the default harddisk
+- Run it!
